@@ -29,6 +29,9 @@ Never overwrite unrelated user changes. Never use destructive Git commands unles
 - GitHub Issues are the single source of truth for unfinished work. Do not create a second TODO list in the repository.
 - Group release work with Milestones, keep acceptance criteria in each Issue, and link the relevant Issue from PRs and commits.
 - At the start and end of work, update the Issue status and record any remaining manual verification.
+- When the user names an Issue number, read that Issue and all comments before planning or acting. Treat its safety notes, dependencies, and acceptance criteria as the task specification.
+- Comment when work starts and before a session-breaking action such as reboot. Record enough evidence that a new session can resume from the Issue alone.
+- A manual-test Issue does not require a code branch unless repository files must change. Never close an Issue while a listed acceptance criterion or manual check remains incomplete.
 
 ## Git Flow
 
