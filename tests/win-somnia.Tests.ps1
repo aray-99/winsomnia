@@ -4,6 +4,7 @@ BeforeAll {
     $script:MonitorPath = Join-Path $script:RepoRoot 'win-somnia-monitor.ps1'
     $script:SetupPath = Join-Path $script:RepoRoot 'win-somnia-setup.ps1'
     $script:CliPath = Join-Path $script:RepoRoot 'win-somnia.ps1'
+    $script:BuildPath = Join-Path $script:RepoRoot 'build-release.ps1'
     $script:WindowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     . $script:CommonPath
 }
@@ -151,5 +152,34 @@ Describe 'win-somnia integrated CLI' {
 
         $LASTEXITCODE | Should -Be 0
         $output -join "`n" | Should -Match '22:15-05:30'
+    }
+}
+
+Describe 'win-somnia release package' {
+    It 'builds a ZIP with a matching SHA-256 checksum' {
+        $outputDirectory = Join-Path $TestDrive 'dist'
+        $version = '0.1.0-test.1'
+        $null = & $script:BuildPath -Version $version -OutputDirectory $outputDirectory
+
+        $archivePath = Join-Path $outputDirectory "win-somnia-$version.zip"
+        $checksumPath = Join-Path $outputDirectory "win-somnia-$version.sha256"
+        Test-Path -LiteralPath $archivePath | Should -BeTrue
+        Test-Path -LiteralPath $checksumPath | Should -BeTrue
+
+        $expectedHash = (Get-Content -LiteralPath $checksumPath -Raw).Split(' ')[0]
+        $actualHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $actualHash | Should -Be $expectedHash
+
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
+        try {
+            $entryNames = @($archive.Entries | ForEach-Object FullName)
+            $entryNames | Should -Contain 'win-somnia.ps1'
+            $entryNames | Should -Contain 'README.md'
+            $entryNames | Should -Contain 'VERSION'
+        }
+        finally {
+            $archive.Dispose()
+        }
     }
 }
