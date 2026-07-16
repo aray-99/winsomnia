@@ -14,3 +14,4 @@
 - 統合CLI、対話メニュー、共有JSON設定、動作ログ
 - Pester安全テスト、PSScriptAnalyzer、Windows GitHub Actions CI
 - ZIPパッケージとSHA-256チェックサムの生成
+- MIT License

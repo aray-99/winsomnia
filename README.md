@@ -137,3 +137,7 @@ New-Item -ItemType File -Path C:\temp\win-somnia-unlock.txt -Force
 | `-LogPath` | 設定ファイルの値 | 動作ログの保存先 |
 
 開始時刻と終了時刻が同じ設定は、意図しない 24 時間ロックを防ぐためエラーにしています。
+
+## ライセンス
+
+MIT Licenseです。詳細は [LICENSE](LICENSE) を参照してください。

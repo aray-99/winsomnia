@@ -36,6 +36,7 @@ try {
     $releaseFiles = @(
         'README.md'
         'CHANGELOG.md'
+        'LICENSE'
         'VERSION'
         'config.example.json'
         'win-somnia.ps1'

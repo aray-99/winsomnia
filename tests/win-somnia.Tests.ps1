@@ -176,6 +176,7 @@ Describe 'win-somnia release package' {
             $entryNames = @($archive.Entries | ForEach-Object FullName)
             $entryNames | Should -Contain 'win-somnia.ps1'
             $entryNames | Should -Contain 'README.md'
+            $entryNames | Should -Contain 'LICENSE'
             $entryNames | Should -Contain 'VERSION'
         }
         finally {
