@@ -15,3 +15,4 @@
 - Pester安全テスト、PSScriptAnalyzer、Windows GitHub Actions CI
 - ZIPパッケージとSHA-256チェックサムの生成
 - MIT License
+- スマートフォンから参照できる緊急復旧手順
