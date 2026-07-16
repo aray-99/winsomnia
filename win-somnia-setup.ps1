@@ -12,22 +12,29 @@ param(
     [string]$MonitorPath,
 
     [Parameter()]
-    [string]$StartTime = '23:00',
+    [string]$StartTime,
 
     [Parameter()]
-    [string]$EndTime = '06:00',
+    [string]$EndTime,
 
     [Parameter()]
     [ValidateRange(1, 3600)]
-    [int]$IntervalSeconds = 5,
+    [Nullable[int]]$IntervalSeconds,
 
     [Parameter()]
-    [ValidateNotNullOrEmpty()]
-    [string]$KillSwitchPath = 'C:\temp\win-somnia-unlock.txt'
+    [string]$KillSwitchPath,
+
+    [Parameter()]
+    [string]$LogPath,
+
+    [Parameter()]
+    [string]$ConfigPath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+. (Join-Path $PSScriptRoot 'win-somnia-common.ps1')
 
 function ConvertTo-QuotedArgument {
     param(
@@ -40,27 +47,6 @@ function ConvertTo-QuotedArgument {
     }
 
     return '"{0}"' -f $Value
-}
-
-function ConvertTo-ClockTime {
-    param(
-        [Parameter(Mandatory)]
-        [string]$Value,
-
-        [Parameter(Mandatory)]
-        [string]$ParameterName
-    )
-
-    $parsed = [TimeSpan]::Zero
-    if (-not [TimeSpan]::TryParseExact(
-            $Value,
-            'hh\:mm',
-            [Globalization.CultureInfo]::InvariantCulture,
-            [ref]$parsed) -or $parsed.TotalHours -ge 24) {
-        throw "-$ParameterName must use 24-hour HH:mm format between 00:00 and 23:59."
-    }
-
-    return $parsed
 }
 
 try {
@@ -85,15 +71,34 @@ try {
         $MonitorPath = Join-Path $PSScriptRoot 'win-somnia-monitor.ps1'
     }
 
+    if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
+        $ConfigPath = Get-WinSomniaDefaultConfigPath
+    }
+    elseif (-not [IO.Path]::IsPathRooted($ConfigPath)) {
+        $ConfigPath = [IO.Path]::GetFullPath($ConfigPath)
+    }
+
+    $config = Read-WinSomniaConfig -Path $ConfigPath -AllowMissing
+    if ($PSBoundParameters.ContainsKey('StartTime')) {
+        $config.startTime = $StartTime
+    }
+    if ($PSBoundParameters.ContainsKey('EndTime')) {
+        $config.endTime = $EndTime
+    }
+    if ($PSBoundParameters.ContainsKey('IntervalSeconds')) {
+        $config.intervalSeconds = [int]$IntervalSeconds
+    }
+    if ($PSBoundParameters.ContainsKey('KillSwitchPath')) {
+        $config.killSwitchPath = $KillSwitchPath
+    }
+    if ($PSBoundParameters.ContainsKey('LogPath')) {
+        $config.logPath = $LogPath
+    }
+    Assert-WinSomniaConfig -Config $config
+
     $resolvedMonitorPath = (Resolve-Path -LiteralPath $MonitorPath -ErrorAction Stop).Path
     if ([IO.Path]::GetExtension($resolvedMonitorPath) -ne '.ps1') {
         throw "MonitorPath must point to a .ps1 file: '$resolvedMonitorPath'."
-    }
-
-    $restrictionStart = ConvertTo-ClockTime -Value $StartTime -ParameterName 'StartTime'
-    $restrictionEnd = ConvertTo-ClockTime -Value $EndTime -ParameterName 'EndTime'
-    if ($restrictionStart -eq $restrictionEnd) {
-        throw '-StartTime and -EndTime must differ.'
     }
 
     $powerShellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -109,10 +114,7 @@ try {
         '-ExecutionPolicy Bypass'
         '-File', (ConvertTo-QuotedArgument $resolvedMonitorPath)
         '-EnableLock'
-        '-StartTime', (ConvertTo-QuotedArgument $StartTime)
-        '-EndTime', (ConvertTo-QuotedArgument $EndTime)
-        '-IntervalSeconds', $IntervalSeconds
-        '-KillSwitchPath', (ConvertTo-QuotedArgument $KillSwitchPath)
+        '-ConfigPath', (ConvertTo-QuotedArgument $ConfigPath)
     ) -join ' '
 
     $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -137,12 +139,17 @@ try {
         -Settings $taskSettings `
         -Description 'Repeatedly locks the workstation during configured restricted hours.'
 
+    if ($PSCmdlet.ShouldProcess($ConfigPath, 'Write win-somnia configuration')) {
+        $ConfigPath = Write-WinSomniaConfig -Config $config -Path $ConfigPath
+    }
+
     if ($PSCmdlet.ShouldProcess($TaskName, 'Register logon-triggered hidden monitor')) {
         Register-ScheduledTask -TaskName $TaskName -InputObject $task -Force -ErrorAction Stop | Out-Null
         Write-Output "Scheduled task '$TaskName' was installed for $currentUser."
         Write-Output "Monitor: $resolvedMonitorPath"
-        Write-Output "Restricted hours: $StartTime-$EndTime; interval: $IntervalSeconds seconds"
-        Write-Output "Kill switch: $KillSwitchPath"
+        Write-Output "Configuration: $ConfigPath"
+        Write-Output "Restricted hours: $($config.startTime)-$($config.endTime); interval: $($config.intervalSeconds) seconds"
+        Write-Output "Kill switch: $($config.killSwitchPath)"
     }
 }
 catch {
