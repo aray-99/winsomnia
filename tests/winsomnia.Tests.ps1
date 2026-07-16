@@ -1,15 +1,16 @@
 BeforeAll {
     $script:RepoRoot = Split-Path -Parent $PSScriptRoot
-    $script:CommonPath = Join-Path $script:RepoRoot 'win-somnia-common.ps1'
-    $script:MonitorPath = Join-Path $script:RepoRoot 'win-somnia-monitor.ps1'
-    $script:SetupPath = Join-Path $script:RepoRoot 'win-somnia-setup.ps1'
-    $script:CliPath = Join-Path $script:RepoRoot 'win-somnia.ps1'
+    $script:CommonPath = Join-Path $script:RepoRoot 'winsomnia-common.ps1'
+    $script:MonitorPath = Join-Path $script:RepoRoot 'winsomnia-monitor.ps1'
+    $script:SetupPath = Join-Path $script:RepoRoot 'winsomnia-setup.ps1'
+    $script:CliPath = Join-Path $script:RepoRoot 'winsomnia.ps1'
     $script:BuildPath = Join-Path $script:RepoRoot 'build-release.ps1'
+    $script:PolicyPath = Join-Path $script:RepoRoot 'scripts\Test-RepositoryPolicy.ps1'
     $script:WindowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     . $script:CommonPath
 }
 
-Describe 'win-somnia configuration' {
+Describe 'winsomnia configuration' {
     It 'accepts the default overnight configuration' {
         $config = Get-WinSomniaDefaultConfig
         { Assert-WinSomniaConfig -Config $config } | Should -Not -Throw
@@ -41,7 +42,14 @@ Describe 'win-somnia configuration' {
     }
 }
 
-Describe 'win-somnia monitor safety' {
+Describe 'winsomnia monitor safety' {
+    It 'waits for the lock helper process and checks its explicit exit code' {
+        $monitorSource = Get-Content -LiteralPath $script:MonitorPath -Raw
+        $monitorSource | Should -Match 'Start-Process'
+        $monitorSource | Should -Match '\$process\.ExitCode'
+        $monitorSource | Should -Not -Match '\$LASTEXITCODE'
+    }
+
     It 'completes a bounded dry run without locking' {
         $logPath = Join-Path $TestDrive 'dry-run.log'
         $missingKillSwitch = Join-Path $TestDrive 'missing-unlock.txt'
@@ -117,7 +125,7 @@ Describe 'win-somnia monitor safety' {
     }
 }
 
-Describe 'win-somnia setup safety' {
+Describe 'winsomnia setup safety' {
     It 'does not write configuration or register during WhatIf' {
         $configPath = Join-Path $TestDrive 'whatif-config.json'
         $arguments = @(
@@ -136,7 +144,7 @@ Describe 'win-somnia setup safety' {
     }
 }
 
-Describe 'win-somnia integrated CLI' {
+Describe 'winsomnia integrated CLI' {
     It 'shows status from the selected configuration' {
         $configPath = Join-Path $TestDrive 'cli-config.json'
         $config = Get-WinSomniaDefaultConfig
@@ -155,14 +163,14 @@ Describe 'win-somnia integrated CLI' {
     }
 }
 
-Describe 'win-somnia release package' {
+Describe 'winsomnia release package' {
     It 'builds a ZIP with a matching SHA-256 checksum' {
         $outputDirectory = Join-Path $TestDrive 'dist'
         $version = '0.1.0-test.1'
         $null = & $script:BuildPath -Version $version -OutputDirectory $outputDirectory
 
-        $archivePath = Join-Path $outputDirectory "win-somnia-$version.zip"
-        $checksumPath = Join-Path $outputDirectory "win-somnia-$version.sha256"
+        $archivePath = Join-Path $outputDirectory "winsomnia-$version.zip"
+        $checksumPath = Join-Path $outputDirectory "winsomnia-$version.sha256"
         Test-Path -LiteralPath $archivePath | Should -BeTrue
         Test-Path -LiteralPath $checksumPath | Should -BeTrue
 
@@ -174,12 +182,62 @@ Describe 'win-somnia release package' {
         $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
         try {
             $entryNames = @($archive.Entries | ForEach-Object FullName)
-            $entryNames | Should -Contain 'win-somnia.ps1'
+            $entryNames | Should -Contain 'winsomnia.ps1'
             $entryNames | Should -Contain 'README.md'
+            $entryNames | Should -Contain 'CONTRIBUTING.md'
+            $entryNames | Should -Contain 'RELEASE.md'
+            $entryNames | Should -Contain 'docs/EMERGENCY.md'
+            $entryNames | Should -Contain 'LICENSE'
             $entryNames | Should -Contain 'VERSION'
+
+            $readmeEntry = $archive.GetEntry('README.md')
+            $reader = [IO.StreamReader]::new($readmeEntry.Open())
+            try {
+                $readme = $reader.ReadToEnd()
+            }
+            finally {
+                $reader.Dispose()
+            }
+            $relativeLinks = [regex]::Matches($readme, '\[[^\]]+\]\((?!https?://|#)([^)]+)\)')
+            foreach ($link in $relativeLinks) {
+                $entryNames | Should -Contain $link.Groups[1].Value
+            }
         }
         finally {
             $archive.Dispose()
         }
+    }
+}
+
+Describe 'winsomnia repository policy' {
+    It 'accepts a release-blocker fix targeting a release branch' {
+        {
+            & $script:PolicyPath `
+                -EventName pull_request `
+                -BaseRef release/0.1.0 `
+                -HeadRef fix/release-safety-guardrails
+        } | Should -Not -Throw
+    }
+
+    It 'rejects a feature branch targeting main' {
+        {
+            & $script:PolicyPath `
+                -EventName pull_request `
+                -BaseRef main `
+                -HeadRef feature/unsafe-route
+        } | Should -Throw -ExpectedMessage '*Branch flow is not allowed*'
+    }
+
+    It 'rejects a developer-specific Windows profile path' {
+        $temporaryRepository = Join-Path $TestDrive 'privacy-repository'
+        New-Item -ItemType Directory -Path $temporaryRepository | Out-Null
+        $null = & git -C $temporaryRepository init
+        ('Example: C:' + '\Users\' + 'example-person\project') |
+            Set-Content -LiteralPath (Join-Path $temporaryRepository 'README.md')
+        $null = & git -C $temporaryRepository add README.md
+
+        {
+            & $script:PolicyPath -RepositoryRoot $temporaryRepository
+        } | Should -Throw -ExpectedMessage '*Developer-specific Windows profile path*'
     }
 }

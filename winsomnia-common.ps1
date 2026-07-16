@@ -4,7 +4,7 @@ function Get-WinSomniaDefaultConfigPath {
         throw 'The current user LocalAppData directory could not be resolved.'
     }
 
-    return Join-Path $localAppData 'win-somnia\config.json'
+    return Join-Path $localAppData 'winsomnia\config.json'
 }
 
 function Get-WinSomniaDefaultConfig {
@@ -15,7 +15,7 @@ function Get-WinSomniaDefaultConfig {
         endTime            = '06:00'
         intervalSeconds    = 5
         killSwitchPath     = 'C:\temp\win-somnia-unlock.txt'
-        logPath            = (Join-Path $localAppData 'win-somnia\win-somnia.log')
+        logPath            = (Join-Path $localAppData 'winsomnia\winsomnia.log')
     }
 }
 
