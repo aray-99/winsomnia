@@ -35,23 +35,42 @@ try {
 
     $releaseFiles = @(
         'README.md'
+        'CONTRIBUTING.md'
+        'RELEASE.md'
         'CHANGELOG.md'
         'LICENSE'
         'VERSION'
         'config.example.json'
+        'docs/EMERGENCY.md'
         'winsomnia.ps1'
         'winsomnia-common.ps1'
         'winsomnia-monitor.ps1'
         'winsomnia-setup.ps1'
-    ) | ForEach-Object {
-        $path = Join-Path $PSScriptRoot $_
+    )
+    foreach ($relativePath in $releaseFiles) {
+        $path = Join-Path $PSScriptRoot $relativePath
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             throw "Release input is missing: '$path'."
         }
-        $path
     }
 
-    Compress-Archive -LiteralPath $releaseFiles -DestinationPath $archivePath -CompressionLevel Optimal
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::Open($archivePath, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($relativePath in $releaseFiles) {
+            $sourcePath = Join-Path $PSScriptRoot $relativePath
+            $entryName = $relativePath.Replace('\', '/')
+            [IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                $archive,
+                $sourcePath,
+                $entryName,
+                [IO.Compression.CompressionLevel]::Optimal) | Out-Null
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
     $hash = Get-FileHash -LiteralPath $archivePath -Algorithm SHA256
     '{0} *{1}' -f $hash.Hash.ToLowerInvariant(), (Split-Path -Leaf $archivePath) |
         Set-Content -LiteralPath $checksumPath -Encoding ASCII

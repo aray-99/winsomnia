@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- AGENTS、コントリビューションガイド、PRテンプレートによる安全な開発規約
+- Git Flow、Conventional Commits、個人情報、リリースタグを検査するCIポリシー
+
 ### Changed
 
 - ツール名と公開ファイル名を `winsomnia` に統一
@@ -11,6 +16,7 @@
 ### Fixed
 
 - GUIプロセスとして起動したLockWorkStationヘルパーの終了コードを安全に取得
+- 配布ZIPへ緊急復旧手順とREADMEから参照する文書を収録
 
 ## [0.1.0-rc.1] - 2026-07-16
 

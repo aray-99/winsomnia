@@ -1,5 +1,12 @@
 # Release process
 
+## Branch discipline
+
+- 通常開発は専用ブランチから`develop`へPRを作成する。
+- `release/*`ではリリース阻害の修正だけを専用ブランチから受け入れる。
+- `release/*`を`main`へマージした後、同じ内容を`develop`へマージバックする。
+- タグは`main`に含まれるコミットにだけ作成する。
+
 ## Release candidate gate
 
 1. `main` と `develop` のCIが成功していることを確認する。
@@ -7,9 +14,11 @@
 3. ログオン、再起動、スリープ復帰、06:00以降の非ロックを確認する。
 4. `VERSION` と `CHANGELOG.md` を更新する。
 5. 配布物を生成し、ZIPの内容とSHA-256を確認する。
+6. リポジトリポリシー検査が成功し、ZIPに緊急復旧手順が含まれることを確認する。
 
 ```powershell
 .\build-release.ps1
+.\scripts\Test-RepositoryPolicy.ps1
 Get-Content .\dist\winsomnia-*.sha256
 ```
 
