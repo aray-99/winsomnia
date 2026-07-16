@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, 'release/**']
+  pull_request:
+    branches: [main, develop, 'release/**']
+
+permissions:
+  contents: read
+
+jobs:
+  powershell:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install test tools
+        shell: powershell
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+
+      - name: Analyze PowerShell
+        shell: powershell
+        run: |
+          $findings = Invoke-ScriptAnalyzer -Path . -Recurse -Severity Warning,Error
+          $findings | Format-Table -AutoSize
+          if ($findings) {
+              throw "PSScriptAnalyzer reported $($findings.Count) finding(s)."
+          }
+
+      - name: Check repository policy
+        shell: powershell
+        env:
+          WINSOMNIA_PRIVATE_IDENTIFIERS: ${{ secrets.WINSOMNIA_PRIVATE_IDENTIFIERS }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          .\scripts\Test-RepositoryPolicy.ps1 `
+            -EventName $env:EVENT_NAME `
+            -BaseRef $env:BASE_REF `
+            -HeadRef $env:HEAD_REF `
+            -BaseSha $env:BASE_SHA `
+            -HeadSha $env:HEAD_SHA
+
+      - name: Run tests
+        shell: powershell
+        run: |
+          Invoke-Pester -Path .\tests -CI -Output Detailed

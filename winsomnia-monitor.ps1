@@ -24,11 +24,44 @@ param(
 
     [Parameter()]
     [ValidateRange(1, 3600)]
-    [int]$TestDurationSeconds = 60
+    [int]$TestDurationSeconds = 60,
+
+    [Parameter()]
+    [string]$ConfigPath,
+
+    [Parameter()]
+    [string]$LogPath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$explicitParameters = @{}
+foreach ($parameterName in $PSBoundParameters.Keys) {
+    $explicitParameters[$parameterName] = $true
+}
+
+. (Join-Path $PSScriptRoot 'winsomnia-common.ps1')
+
+if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
+    $ConfigPath = Get-WinSomniaDefaultConfigPath
+}
+
+$config = Read-WinSomniaConfig -Path $ConfigPath -AllowMissing
+if (-not $explicitParameters.ContainsKey('StartTime')) {
+    $StartTime = [string]$config.startTime
+}
+if (-not $explicitParameters.ContainsKey('EndTime')) {
+    $EndTime = [string]$config.endTime
+}
+if (-not $explicitParameters.ContainsKey('IntervalSeconds')) {
+    $IntervalSeconds = [int]$config.intervalSeconds
+}
+if (-not $explicitParameters.ContainsKey('KillSwitchPath')) {
+    $KillSwitchPath = [string]$config.killSwitchPath
+}
+if ([string]::IsNullOrWhiteSpace($LogPath)) {
+    $LogPath = [string]$config.logPath
+}
 
 function ConvertTo-ClockTime {
     param(
@@ -76,7 +109,8 @@ function Test-IsRestrictedTime {
 }
 
 function Test-KillSwitch {
-    return Test-Path -LiteralPath $KillSwitchPath -PathType Leaf
+    # Any filesystem object at the path is treated as a stop request.
+    return Test-Path -LiteralPath $KillSwitchPath
 }
 
 function Wait-Safely {
@@ -97,6 +131,50 @@ function Wait-Safely {
     return $true
 }
 
+function Write-MonitorLog {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Message,
+
+        [Parameter()]
+        [ValidateSet('INFO', 'WARN', 'ERROR')]
+        [string]$Level = 'INFO'
+    )
+
+    try {
+        $logDirectory = Split-Path -Parent $LogPath
+        if (-not (Test-Path -LiteralPath $logDirectory -PathType Container)) {
+            New-Item -ItemType Directory -Path $logDirectory -Force -ErrorAction Stop | Out-Null
+        }
+
+        if ((Test-Path -LiteralPath $LogPath -PathType Leaf) -and
+            (Get-Item -LiteralPath $LogPath).Length -gt 1MB) {
+            Move-Item -LiteralPath $LogPath -Destination "$LogPath.previous" -Force
+        }
+
+        $line = '{0} [{1}] {2}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $Level, $Message
+        Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8 -ErrorAction Stop
+    }
+    catch {
+        Write-Warning "Monitor log could not be written: $($_.Exception.Message)"
+    }
+}
+
+function Invoke-WorkstationLock {
+    $rundll32Path = Join-Path $env:SystemRoot 'System32\rundll32.exe'
+    $process = Start-Process `
+        -FilePath $rundll32Path `
+        -ArgumentList 'user32.dll,LockWorkStation' `
+        -WindowStyle Hidden `
+        -Wait `
+        -PassThru `
+        -ErrorAction Stop
+
+    if ($process.ExitCode -ne 0) {
+        throw "LockWorkStation failed with exit code $($process.ExitCode)."
+    }
+}
+
 try {
     $restrictionStart = ConvertTo-ClockTime -Value $StartTime -ParameterName 'StartTime'
     $restrictionEnd = ConvertTo-ClockTime -Value $EndTime -ParameterName 'EndTime'
@@ -110,9 +188,12 @@ try {
     }
 
     if (Test-KillSwitch) {
+        Write-MonitorLog -Message "Kill switch found at '$KillSwitchPath'; monitor did not start."
         Write-Output "Kill switch found at '$KillSwitchPath'. Exiting without locking."
         exit 0
     }
+
+    Write-MonitorLog -Message "Monitor started; restricted hours $StartTime-$EndTime, interval $IntervalSeconds seconds, real lock enabled: $([bool]$EnableLock)."
 
     $stopAtUtc = if ($DryRun) {
         [DateTime]::UtcNow.AddSeconds($TestDurationSeconds)
@@ -123,11 +204,13 @@ try {
 
     while ($true) {
         if (Test-KillSwitch) {
+            Write-MonitorLog -Message "Kill switch found at '$KillSwitchPath'; monitor is stopping."
             Write-Output "Kill switch found at '$KillSwitchPath'. Exiting."
             break
         }
 
         if ($DryRun -and [DateTime]::UtcNow -ge $stopAtUtc) {
+            Write-MonitorLog -Message "Dry run completed after $TestDurationSeconds seconds."
             Write-Output "Dry run completed after $TestDurationSeconds seconds."
             break
         }
@@ -149,10 +232,8 @@ try {
                     break
                 }
 
-                & "$env:SystemRoot\System32\rundll32.exe" user32.dll,LockWorkStation
-                if ($LASTEXITCODE -ne 0) {
-                    throw "LockWorkStation failed with exit code $LASTEXITCODE."
-                }
+                Write-MonitorLog -Message 'Requesting workstation lock.'
+                Invoke-WorkstationLock
             }
         }
 
@@ -163,6 +244,7 @@ try {
     }
 }
 catch {
-    Write-Error "win-somnia monitor stopped: $($_.Exception.Message)"
+    Write-MonitorLog -Message "Monitor stopped with an error: $($_.Exception.Message)" -Level ERROR
+    Write-Error "winsomnia monitor stopped: $($_.Exception.Message)"
     exit 1
 }
