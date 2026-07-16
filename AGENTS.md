@@ -24,6 +24,12 @@ Before changing files:
 
 Never overwrite unrelated user changes. Never use destructive Git commands unless the user explicitly approved the exact history operation.
 
+## Task tracking
+
+- GitHub Issues are the single source of truth for unfinished work. Do not create a second TODO list in the repository.
+- Group release work with Milestones, keep acceptance criteria in each Issue, and link the relevant Issue from PRs and commits.
+- At the start and end of work, update the Issue status and record any remaining manual verification.
+
 ## Git Flow
 
 - Never develop directly on `main`, `develop`, or `release/*`.
