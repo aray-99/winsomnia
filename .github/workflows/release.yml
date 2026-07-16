@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install test tools
+        shell: powershell
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+
+      - name: Analyze and test
+        shell: powershell
+        run: |
+          $findings = Invoke-ScriptAnalyzer -Path . -Recurse -Severity Warning,Error
+          $findings | Format-Table -AutoSize
+          if ($findings) {
+              throw "PSScriptAnalyzer reported $($findings.Count) finding(s)."
+          }
+          Invoke-Pester -Path .\tests -CI -Output Detailed
+
+      - name: Build release files
+        shell: powershell
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          .\build-release.ps1 -Version $version
+
+      - name: Publish GitHub Release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = Get-ChildItem -LiteralPath .\dist -File | ForEach-Object FullName
+          $arguments = @(
+              'release', 'create', $env:GITHUB_REF_NAME
+          ) + $assets + @(
+              '--verify-tag'
+              '--generate-notes'
+              '--title', "win-somnia $env:GITHUB_REF_NAME"
+          )
+          if ($env:GITHUB_REF_NAME.Contains('-')) {
+              $arguments += '--prerelease'
+          }
+          & gh @arguments

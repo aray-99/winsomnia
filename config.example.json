@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "startTime": "23:00",
+  "endTime": "06:00",
+  "intervalSeconds": 5,
+  "killSwitchPath": "C:\\temp\\win-somnia-unlock.txt",
+  "logPath": "C:\\Users\\USER\\AppData\\Local\\win-somnia\\win-somnia.log"
+}
