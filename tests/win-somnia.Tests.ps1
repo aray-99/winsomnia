@@ -42,6 +42,13 @@ Describe 'win-somnia configuration' {
 }
 
 Describe 'win-somnia monitor safety' {
+    It 'waits for the lock helper process and checks its explicit exit code' {
+        $monitorSource = Get-Content -LiteralPath $script:MonitorPath -Raw
+        $monitorSource | Should -Match 'Start-Process'
+        $monitorSource | Should -Match '\$process\.ExitCode'
+        $monitorSource | Should -Not -Match '\$LASTEXITCODE'
+    }
+
     It 'completes a bounded dry run without locking' {
         $logPath = Join-Path $TestDrive 'dry-run.log'
         $missingKillSwitch = Join-Path $TestDrive 'missing-unlock.txt'

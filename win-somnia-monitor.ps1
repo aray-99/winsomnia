@@ -160,6 +160,21 @@ function Write-MonitorLog {
     }
 }
 
+function Invoke-WorkstationLock {
+    $rundll32Path = Join-Path $env:SystemRoot 'System32\rundll32.exe'
+    $process = Start-Process `
+        -FilePath $rundll32Path `
+        -ArgumentList 'user32.dll,LockWorkStation' `
+        -WindowStyle Hidden `
+        -Wait `
+        -PassThru `
+        -ErrorAction Stop
+
+    if ($process.ExitCode -ne 0) {
+        throw "LockWorkStation failed with exit code $($process.ExitCode)."
+    }
+}
+
 try {
     $restrictionStart = ConvertTo-ClockTime -Value $StartTime -ParameterName 'StartTime'
     $restrictionEnd = ConvertTo-ClockTime -Value $EndTime -ParameterName 'EndTime'
@@ -218,10 +233,7 @@ try {
                 }
 
                 Write-MonitorLog -Message 'Requesting workstation lock.'
-                & "$env:SystemRoot\System32\rundll32.exe" user32.dll,LockWorkStation
-                if ($LASTEXITCODE -ne 0) {
-                    throw "LockWorkStation failed with exit code $LASTEXITCODE."
-                }
+                Invoke-WorkstationLock
             }
         }
 

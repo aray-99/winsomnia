@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- GUIプロセスとして起動したLockWorkStationヘルパーの終了コードを安全に取得
+
 ## [0.1.0-rc.1] - 2026-07-16
 
 ### Added
