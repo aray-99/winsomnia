@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Install test tools
         shell: powershell
@@ -24,7 +26,11 @@ jobs:
 
       - name: Analyze and test
         shell: powershell
+        env:
+          WINSOMNIA_PRIVATE_IDENTIFIERS: ${{ secrets.WINSOMNIA_PRIVATE_IDENTIFIERS }}
         run: |
+          git fetch origin main:refs/remotes/origin/main
+          .\scripts\Test-RepositoryPolicy.ps1 -TagName $env:GITHUB_REF_NAME
           $findings = Invoke-ScriptAnalyzer -Path . -Recurse -Severity Warning,Error
           $findings | Format-Table -AutoSize
           if ($findings) {

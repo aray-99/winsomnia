@@ -5,6 +5,7 @@ BeforeAll {
     $script:SetupPath = Join-Path $script:RepoRoot 'winsomnia-setup.ps1'
     $script:CliPath = Join-Path $script:RepoRoot 'winsomnia.ps1'
     $script:BuildPath = Join-Path $script:RepoRoot 'build-release.ps1'
+    $script:PolicyPath = Join-Path $script:RepoRoot 'scripts\Test-RepositoryPolicy.ps1'
     $script:WindowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     . $script:CommonPath
 }
@@ -183,11 +184,60 @@ Describe 'winsomnia release package' {
             $entryNames = @($archive.Entries | ForEach-Object FullName)
             $entryNames | Should -Contain 'winsomnia.ps1'
             $entryNames | Should -Contain 'README.md'
+            $entryNames | Should -Contain 'CONTRIBUTING.md'
+            $entryNames | Should -Contain 'RELEASE.md'
+            $entryNames | Should -Contain 'docs/EMERGENCY.md'
             $entryNames | Should -Contain 'LICENSE'
             $entryNames | Should -Contain 'VERSION'
+
+            $readmeEntry = $archive.GetEntry('README.md')
+            $reader = [IO.StreamReader]::new($readmeEntry.Open())
+            try {
+                $readme = $reader.ReadToEnd()
+            }
+            finally {
+                $reader.Dispose()
+            }
+            $relativeLinks = [regex]::Matches($readme, '\[[^\]]+\]\((?!https?://|#)([^)]+)\)')
+            foreach ($link in $relativeLinks) {
+                $entryNames | Should -Contain $link.Groups[1].Value
+            }
         }
         finally {
             $archive.Dispose()
         }
+    }
+}
+
+Describe 'winsomnia repository policy' {
+    It 'accepts a release-blocker fix targeting a release branch' {
+        {
+            & $script:PolicyPath `
+                -EventName pull_request `
+                -BaseRef release/0.1.0 `
+                -HeadRef fix/release-safety-guardrails
+        } | Should -Not -Throw
+    }
+
+    It 'rejects a feature branch targeting main' {
+        {
+            & $script:PolicyPath `
+                -EventName pull_request `
+                -BaseRef main `
+                -HeadRef feature/unsafe-route
+        } | Should -Throw -ExpectedMessage '*Branch flow is not allowed*'
+    }
+
+    It 'rejects a developer-specific Windows profile path' {
+        $temporaryRepository = Join-Path $TestDrive 'privacy-repository'
+        New-Item -ItemType Directory -Path $temporaryRepository | Out-Null
+        $null = & git -C $temporaryRepository init
+        ('Example: C:' + '\Users\' + 'example-person\project') |
+            Set-Content -LiteralPath (Join-Path $temporaryRepository 'README.md')
+        $null = & git -C $temporaryRepository add README.md
+
+        {
+            & $script:PolicyPath -RepositoryRoot $temporaryRepository
+        } | Should -Throw -ExpectedMessage '*Developer-specific Windows profile path*'
     }
 }

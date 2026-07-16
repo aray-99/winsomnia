@@ -117,7 +117,7 @@ Invoke-Pester -Path .\tests -Output Detailed
 .\build-release.ps1
 ~~~
 
-詳しいリリース工程は [RELEASE.md](RELEASE.md)、変更履歴は [CHANGELOG.md](CHANGELOG.md) を参照してください。
+開発規約は [CONTRIBUTING.md](CONTRIBUTING.md)、詳しいリリース工程は [RELEASE.md](RELEASE.md)、変更履歴は [CHANGELOG.md](CHANGELOG.md) を参照してください。
 
 ## ライセンス
 
