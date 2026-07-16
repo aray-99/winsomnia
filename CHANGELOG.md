@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- ツール名と公開ファイル名を `winsomnia` に統一
+
 ### Fixed
 
 - GUIプロセスとして起動したLockWorkStationヘルパーの終了コードを安全に取得

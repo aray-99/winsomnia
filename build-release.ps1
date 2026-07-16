@@ -27,7 +27,7 @@ try {
         New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
     }
 
-    $packageName = "win-somnia-$Version"
+    $packageName = "winsomnia-$Version"
     $archivePath = Join-Path $outputPath "$packageName.zip"
     $checksumPath = Join-Path $outputPath "$packageName.sha256"
     Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
@@ -39,10 +39,10 @@ try {
         'LICENSE'
         'VERSION'
         'config.example.json'
-        'win-somnia.ps1'
-        'win-somnia-common.ps1'
-        'win-somnia-monitor.ps1'
-        'win-somnia-setup.ps1'
+        'winsomnia.ps1'
+        'winsomnia-common.ps1'
+        'winsomnia-monitor.ps1'
+        'winsomnia-setup.ps1'
     ) | ForEach-Object {
         $path = Join-Path $PSScriptRoot $_
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -60,6 +60,6 @@ try {
     Write-Output "Checksum: $checksumPath"
 }
 catch {
-    Write-Error "win-somnia release build failed: $($_.Exception.Message)"
+    Write-Error "winsomnia release build failed: $($_.Exception.Message)"
     exit 1
 }

@@ -4,5 +4,5 @@
   "endTime": "06:00",
   "intervalSeconds": 5,
   "killSwitchPath": "C:\\temp\\win-somnia-unlock.txt",
-  "logPath": "C:\\Users\\USER\\AppData\\Local\\win-somnia\\win-somnia.log"
+  "logPath": "C:\\Users\\USER\\AppData\\Local\\winsomnia\\winsomnia.log"
 }

@@ -34,12 +34,13 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$taskName = 'winsomnia'
 $scriptParameters = @{}
 foreach ($parameterName in $PSBoundParameters.Keys) {
     $scriptParameters[$parameterName] = $PSBoundParameters[$parameterName]
 }
 
-. (Join-Path $PSScriptRoot 'win-somnia-common.ps1')
+. (Join-Path $PSScriptRoot 'winsomnia-common.ps1')
 
 if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
     $ConfigPath = Get-WinSomniaDefaultConfigPath
@@ -102,15 +103,15 @@ function Invoke-SetupCommand {
         $arguments.WhatIf = $true
     }
 
-    & (Join-Path $PSScriptRoot 'win-somnia-setup.ps1') @arguments
+    & (Join-Path $PSScriptRoot 'winsomnia-setup.ps1') @arguments
 }
 
 function Show-Status {
     $config = Get-CurrentConfig
     $killSwitchPresent = Test-Path -LiteralPath $config.killSwitchPath
-    $task = Get-ScheduledTask -TaskName 'win-somnia' -ErrorAction SilentlyContinue
+    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 
-    Write-Output 'win-somnia status'
+    Write-Output 'winsomnia status'
     Write-Output "  Configuration : $ConfigPath"
     Write-Output "  Restricted    : $($config.startTime)-$($config.endTime)"
     Write-Output "  Lock interval : $($config.intervalSeconds) seconds"
@@ -122,7 +123,7 @@ function Show-Status {
         Write-Output '  Task          : Not installed'
     }
     else {
-        $taskInfo = Get-ScheduledTaskInfo -TaskName 'win-somnia' -ErrorAction SilentlyContinue
+        $taskInfo = Get-ScheduledTaskInfo -TaskName $taskName -ErrorAction SilentlyContinue
         Write-Output "  Task          : $($task.State)"
         if ($null -ne $taskInfo) {
             Write-Output "  Last result   : $($taskInfo.LastTaskResult)"
@@ -140,29 +141,29 @@ function Invoke-Pause {
     if (-not (Test-Path -LiteralPath $config.killSwitchPath)) {
         New-Item -ItemType File -Path $config.killSwitchPath -Force | Out-Null
     }
-    Stop-ScheduledTask -TaskName 'win-somnia' -ErrorAction SilentlyContinue
-    Write-Output "win-somnia is paused. Kill switch: $($config.killSwitchPath)"
+    Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    Write-Output "winsomnia is paused. Kill switch: $($config.killSwitchPath)"
 }
 
 function Invoke-Resume {
     $config = Get-CurrentConfig
-    $task = Get-ScheduledTask -TaskName 'win-somnia' -ErrorAction SilentlyContinue
+    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     if ($null -eq $task) {
-        throw "Scheduled task 'win-somnia' is not installed. Run setup first."
+        throw "Scheduled task '$taskName' is not installed. Run setup first."
     }
 
     Remove-Item -LiteralPath $config.killSwitchPath -Force -ErrorAction SilentlyContinue
-    Start-ScheduledTask -TaskName 'win-somnia' -ErrorAction Stop
-    Write-Output "win-somnia is active for $($config.startTime)-$($config.endTime)."
+    Start-ScheduledTask -TaskName $taskName -ErrorAction Stop
+    Write-Output "winsomnia is active for $($config.startTime)-$($config.endTime)."
 }
 
 function Invoke-SafeTest {
     $now = Get-Date
     $testStart = $now.AddMinutes(-1).ToString('HH:mm')
     $testEnd = $now.AddMinutes(1).ToString('HH:mm')
-    $unusedKillSwitch = Join-Path ([IO.Path]::GetTempPath()) "win-somnia-dryrun-$([Guid]::NewGuid().ToString('N')).txt"
+    $unusedKillSwitch = Join-Path ([IO.Path]::GetTempPath()) "winsomnia-dryrun-$([Guid]::NewGuid().ToString('N')).txt"
 
-    & (Join-Path $PSScriptRoot 'win-somnia-monitor.ps1') `
+    & (Join-Path $PSScriptRoot 'winsomnia-monitor.ps1') `
         -DryRun `
         -TestDurationSeconds $TestDurationSeconds `
         -StartTime $testStart `
@@ -190,7 +191,7 @@ function Invoke-UninstallCommand {
     if ($WhatIfPreference) {
         $arguments.WhatIf = $true
     }
-    & (Join-Path $PSScriptRoot 'win-somnia-setup.ps1') @arguments
+    & (Join-Path $PSScriptRoot 'winsomnia-setup.ps1') @arguments
 }
 
 function Show-InteractiveMenu {
@@ -247,6 +248,6 @@ try {
     }
 }
 catch {
-    Write-Error "win-somnia command failed: $($_.Exception.Message)"
+    Write-Error "winsomnia command failed: $($_.Exception.Message)"
     exit 1
 }

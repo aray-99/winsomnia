@@ -10,7 +10,7 @@
 
 ```powershell
 .\build-release.ps1
-Get-Content .\dist\win-somnia-*.sha256
+Get-Content .\dist\winsomnia-*.sha256
 ```
 
 ## Tag and GitHub Release
@@ -18,7 +18,7 @@ Get-Content .\dist\win-somnia-*.sha256
 リリース候補は `v0.1.0-rc.1` のような注釈付きタグを使用します。
 
 ```powershell
-git tag -a v0.1.0-rc.1 -m "win-somnia v0.1.0 release candidate 1"
+git tag -a v0.1.0-rc.1 -m "winsomnia v0.1.0 release candidate 1"
 git push origin v0.1.0-rc.1
 ```
 
@@ -31,6 +31,6 @@ git push origin v0.1.0-rc.1
 配布後に安全性へ影響する問題が見つかった場合は、GitHub Releaseをpre-releaseへ戻し、利用者へ次を案内します。
 
 ```powershell
-.\win-somnia.ps1 pause
-.\win-somnia.ps1 uninstall
+.\winsomnia.ps1 pause
+.\winsomnia.ps1 uninstall
 ```

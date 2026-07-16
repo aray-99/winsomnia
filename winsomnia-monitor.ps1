@@ -40,7 +40,7 @@ foreach ($parameterName in $PSBoundParameters.Keys) {
     $explicitParameters[$parameterName] = $true
 }
 
-. (Join-Path $PSScriptRoot 'win-somnia-common.ps1')
+. (Join-Path $PSScriptRoot 'winsomnia-common.ps1')
 
 if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
     $ConfigPath = Get-WinSomniaDefaultConfigPath
@@ -245,6 +245,6 @@ try {
 }
 catch {
     Write-MonitorLog -Message "Monitor stopped with an error: $($_.Exception.Message)" -Level ERROR
-    Write-Error "win-somnia monitor stopped: $($_.Exception.Message)"
+    Write-Error "winsomnia monitor stopped: $($_.Exception.Message)"
     exit 1
 }

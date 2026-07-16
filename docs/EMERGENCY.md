@@ -12,8 +12,8 @@
 ~~~powershell
 New-Item -ItemType Directory -Path C:\temp -Force
 New-Item -ItemType File -Path C:\temp\win-somnia-unlock.txt -Force
-Stop-ScheduledTask -TaskName win-somnia -ErrorAction SilentlyContinue
-Disable-ScheduledTask -TaskName win-somnia
+Stop-ScheduledTask -TaskName winsomnia -ErrorAction SilentlyContinue
+Disable-ScheduledTask -TaskName winsomnia
 ~~~
 
 5. 元のユーザーへ切り替えてログインします。
@@ -26,7 +26,7 @@ Disable-ScheduledTask -TaskName win-somnia
 
 ~~~powershell
 Test-Path C:\temp\win-somnia-unlock.txt
-Get-ScheduledTask -TaskName win-somnia |
+Get-ScheduledTask -TaskName winsomnia |
     Select-Object TaskName, State
 ~~~
 
@@ -48,7 +48,7 @@ Microsoft公式資料：
 ~~~powershell
 New-Item -ItemType Directory -Path C:\temp -Force
 New-Item -ItemType File -Path C:\temp\win-somnia-unlock.txt -Force
-Disable-ScheduledTask -TaskName win-somnia
+Disable-ScheduledTask -TaskName winsomnia
 ~~~
 
 ## 再起動だけでは停止にならない
@@ -60,9 +60,9 @@ Disable-ScheduledTask -TaskName win-somnia
 原因を解決し、ドライランが成功してから元のユーザーで実行します。
 
 ~~~powershell
-Enable-ScheduledTask -TaskName win-somnia
-.\win-somnia.ps1 test -TestDurationSeconds 60
-.\win-somnia.ps1 resume
+Enable-ScheduledTask -TaskName winsomnia
+.\winsomnia.ps1 test -TestDurationSeconds 60
+.\winsomnia.ps1 resume
 ~~~
 
 非常用アカウントは日常利用せず、パスワードはスマートフォンのパスワードマネージャー、または封印した紙などPC外に保管してください。

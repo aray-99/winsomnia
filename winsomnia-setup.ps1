@@ -6,7 +6,7 @@ param(
 
     [Parameter()]
     [ValidateNotNullOrEmpty()]
-    [string]$TaskName = 'win-somnia',
+    [string]$TaskName = 'winsomnia',
 
     [Parameter()]
     [string]$MonitorPath,
@@ -34,7 +34,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-. (Join-Path $PSScriptRoot 'win-somnia-common.ps1')
+. (Join-Path $PSScriptRoot 'winsomnia-common.ps1')
 
 function ConvertTo-QuotedArgument {
     param(
@@ -52,23 +52,34 @@ function ConvertTo-QuotedArgument {
 try {
     Import-Module ScheduledTasks -ErrorAction Stop
     $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    $legacyTaskName = 'win-somnia'
+    $legacyTask = if ($TaskName -eq 'winsomnia') {
+        Get-ScheduledTask -TaskName $legacyTaskName -ErrorAction SilentlyContinue
+    }
+    else {
+        $null
+    }
 
     if ($Action -eq 'Uninstall') {
-        if ($null -eq $existingTask) {
+        if ($null -eq $existingTask -and $null -eq $legacyTask) {
             Write-Output "Scheduled task '$TaskName' is not installed."
             exit 0
         }
 
-        if ($PSCmdlet.ShouldProcess($TaskName, 'Unregister scheduled task')) {
+        if ($null -ne $existingTask -and $PSCmdlet.ShouldProcess($TaskName, 'Unregister scheduled task')) {
             Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction Stop
             Write-Output "Scheduled task '$TaskName' was removed."
+        }
+        if ($null -ne $legacyTask -and $PSCmdlet.ShouldProcess($legacyTaskName, 'Unregister legacy scheduled task')) {
+            Unregister-ScheduledTask -TaskName $legacyTaskName -Confirm:$false -ErrorAction Stop
+            Write-Output "Legacy scheduled task '$legacyTaskName' was removed."
         }
 
         exit 0
     }
 
     if ([string]::IsNullOrWhiteSpace($MonitorPath)) {
-        $MonitorPath = Join-Path $PSScriptRoot 'win-somnia-monitor.ps1'
+        $MonitorPath = Join-Path $PSScriptRoot 'winsomnia-monitor.ps1'
     }
 
     if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
@@ -139,7 +150,7 @@ try {
         -Settings $taskSettings `
         -Description 'Repeatedly locks the workstation during configured restricted hours.'
 
-    if ($PSCmdlet.ShouldProcess($ConfigPath, 'Write win-somnia configuration')) {
+    if ($PSCmdlet.ShouldProcess($ConfigPath, 'Write winsomnia configuration')) {
         $ConfigPath = Write-WinSomniaConfig -Config $config -Path $ConfigPath
     }
 
@@ -151,8 +162,12 @@ try {
         Write-Output "Restricted hours: $($config.startTime)-$($config.endTime); interval: $($config.intervalSeconds) seconds"
         Write-Output "Kill switch: $($config.killSwitchPath)"
     }
+    if ($null -ne $legacyTask -and $PSCmdlet.ShouldProcess($legacyTaskName, 'Remove legacy scheduled task after migration')) {
+        Unregister-ScheduledTask -TaskName $legacyTaskName -Confirm:$false -ErrorAction Stop
+        Write-Output "Legacy scheduled task '$legacyTaskName' was removed after migration."
+    }
 }
 catch {
-    Write-Error "win-somnia setup failed during '$Action': $($_.Exception.Message)"
+    Write-Error "winsomnia setup failed during '$Action': $($_.Exception.Message)"
     exit 1
 }
