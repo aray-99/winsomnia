@@ -8,6 +8,12 @@ namespace Winsomnia.Core;
 
 public sealed class EngineClient
 {
+    private readonly string pipeName;
+
+    public EngineClient(string? pipeName = null)
+    {
+        this.pipeName = string.IsNullOrWhiteSpace(pipeName) ? PipeName : pipeName;
+    }
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true
@@ -52,7 +58,7 @@ public sealed class EngineClient
 
     public async Task<T> SendAsync<T>(string command, object payload, CancellationToken cancellationToken = default)
     {
-        using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+        using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
         await pipe.ConnectAsync(2000, cancellationToken);
         using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, true);
         using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, true) { AutoFlush = true };

@@ -7,6 +7,7 @@ namespace Winsomnia.Desktop;
 public sealed class StatusWindow : Window
 {
     private readonly TextBlock content = new() { Margin = new Thickness(18), TextWrapping = TextWrapping.Wrap };
+    private readonly WindowCloseGate closeGate = new();
 
     public StatusWindow(EngineClient client)
     {
@@ -30,6 +31,14 @@ public sealed class StatusWindow : Window
                 content.Text = Localization.Text("Unavailable");
             }
         };
-        Deactivated += (_, _) => Close();
+        Closing += (_, _) => closeGate.MarkClosing();
+        Deactivated += (_, _) =>
+        {
+            if (!closeGate.TryQueueClose()) return;
+            _ = Dispatcher.BeginInvoke(() =>
+            {
+                if (closeGate.TryBeginClose()) Close();
+            });
+        };
     }
 }

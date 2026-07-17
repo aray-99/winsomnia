@@ -6,6 +6,7 @@ var directory = Path.Combine(Path.GetTempPath(), $"winsomnia-engine-tests-{Guid.
 Directory.CreateDirectory(directory);
 var killSwitch = Path.Combine(directory, "unlock.txt");
 File.WriteAllText(killSwitch, string.Empty);
+var pipeName = $"winsomnia.engine.test.{Guid.NewGuid():N}";
 var clock = new SystemClock();
 var manager = new StateManager(Path.Combine(directory, "state-v2.json"), clock);
 var initial = new PersistentState
@@ -17,13 +18,13 @@ var initial = new PersistentState
 };
 manager.Save(initial);
 
-await using var host = new EngineHost(manager, clock, new NoOpWorkstationLocker(), false);
+await using var host = new EngineHost(manager, clock, new NoOpWorkstationLocker(), false, pipeName: pipeName);
 using var shutdown = new CancellationTokenSource();
 var running = host.RunAsync(shutdown.Token);
 try
 {
     await Task.Delay(250);
-    var client = new EngineClient();
+    var client = new EngineClient(pipeName);
     var status = await client.GetStatusAsync();
     Assert(status.Paused, "Engine must start paused.");
 
