@@ -19,6 +19,7 @@ public sealed class EngineHost : IAsyncDisposable
     private readonly ISystemClock clock;
     private readonly IWorkstationLocker locker;
     private readonly bool realLockEnabled;
+    private readonly string pipeName;
     private readonly SemaphoreSlim stateGate = new(1, 1);
     private readonly CancellationTokenSource stop = new();
     private PersistentState state;
@@ -26,12 +27,13 @@ public sealed class EngineHost : IAsyncDisposable
     private string? lastError;
 
     public EngineHost(StateManager stateManager, ISystemClock clock, IWorkstationLocker locker,
-        bool realLockEnabled, string? legacyConfigPath = null)
+        bool realLockEnabled, string? legacyConfigPath = null, string? pipeName = null)
     {
         this.stateManager = stateManager;
         this.clock = clock;
         this.locker = locker;
         this.realLockEnabled = realLockEnabled;
+        this.pipeName = string.IsNullOrWhiteSpace(pipeName) ? GetPipeName() : pipeName;
         state = stateManager.LoadOrCreate(legacyConfigPath);
     }
 
@@ -111,7 +113,7 @@ public sealed class EngineHost : IAsyncDisposable
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            var server = new NamedPipeServerStream(GetPipeName(), PipeDirection.InOut, 10,
+            var server = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 10,
                 PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
             try
             {
