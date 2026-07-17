@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <UseWPF>true</UseWPF>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Winsomnia.Desktop\Winsomnia.Desktop.csproj" />
