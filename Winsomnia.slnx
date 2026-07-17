@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Winsomnia.Core/Winsomnia.Core.csproj" />
+    <Project Path="src/Winsomnia.Engine/Winsomnia.Engine.csproj" />
+    <Project Path="src/Winsomnia.Desktop/Winsomnia.Desktop.csproj" />
+    <Project Path="src/Winsomnia.Setup/Winsomnia.Setup.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Winsomnia.Core.Tests/Winsomnia.Core.Tests.csproj" />
+    <Project Path="tests/Winsomnia.Engine.Tests/Winsomnia.Engine.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -18,6 +18,18 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build and test desktop components
+        shell: powershell
+        run: |
+          dotnet build .\Winsomnia.slnx -c Release
+          dotnet run --project .\tests\Winsomnia.Core.Tests\Winsomnia.Core.Tests.csproj -c Release
+          dotnet run --project .\tests\Winsomnia.Engine.Tests\Winsomnia.Engine.Tests.csproj -c Release
+
       - name: Install test tools
         shell: powershell
         run: |

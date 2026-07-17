@@ -17,6 +17,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
       - name: Install test tools
         shell: powershell
         run: |
@@ -37,19 +42,25 @@ jobs:
               throw "PSScriptAnalyzer reported $($findings.Count) finding(s)."
           }
           Invoke-Pester -Path .\tests -CI -Output Detailed
+          dotnet build .\Winsomnia.slnx -c Release
+          dotnet run --project .\tests\Winsomnia.Core.Tests\Winsomnia.Core.Tests.csproj -c Release
+          dotnet run --project .\tests\Winsomnia.Engine.Tests\Winsomnia.Engine.Tests.csproj -c Release
 
       - name: Build release files
         shell: powershell
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
           .\build-release.ps1 -Version $version
+          .\build-desktop.ps1 -Version $version
 
       - name: Publish GitHub Release
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $assets = Get-ChildItem -LiteralPath .\dist -File | ForEach-Object FullName
+          $assets = Get-ChildItem -LiteralPath .\dist -File -Recurse |
+              Where-Object { $_.Extension -in @('.zip', '.sha256') } |
+              ForEach-Object FullName
           $arguments = @(
               'release', 'create', $env:GITHUB_REF_NAME
           ) + $assets + @(
