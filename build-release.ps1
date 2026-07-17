@@ -42,6 +42,8 @@ try {
         'VERSION'
         'config.example.json'
         'docs/EMERGENCY.md'
+        'docs/ARCHITECTURE.md'
+        'docs/IPC.md'
         'winsomnia.ps1'
         'winsomnia-common.ps1'
         'winsomnia-monitor.ps1'
