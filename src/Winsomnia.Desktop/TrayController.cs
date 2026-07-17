@@ -10,7 +10,7 @@ public sealed class TrayController : IDisposable
     private readonly EngineClient client;
     private readonly Forms.NotifyIcon icon;
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(5) };
-    private bool promptVisible;
+    private readonly PromptDisplayGate promptGate = new();
 
     public TrayController(EngineClient client)
     {
@@ -38,19 +38,24 @@ public sealed class TrayController : IDisposable
             icon.Text = $"winsomnia: {status.Phase}, {status.CreditMinutes} min";
             if (status.Phase == "warning")
                 icon.ShowBalloonTip(5000, "winsomnia", "Restriction starts in five minutes / 5分後に制限を開始します", Forms.ToolTipIcon.Info);
-            if (status.Phase == "restriction-prompt" && !promptVisible)
+            if (status.Phase == "restriction-prompt")
             {
-                promptVisible = true;
                 var seconds = RestrictionPromptWindow.SecondsUntil(status.GraceUntilUtc, DateTimeOffset.UtcNow, 30);
-                var prompt = new RestrictionPromptWindow(client, seconds);
-                prompt.Closed += (_, _) => promptVisible = false;
-                prompt.Show();
+                ShowRestrictionPrompt(seconds);
             }
         }
         catch
         {
             icon.Text = "winsomnia: safely paused / 安全停止";
         }
+    }
+
+    public void ShowRestrictionPrompt(int seconds)
+    {
+        if (!promptGate.TryOpen()) return;
+        var prompt = new RestrictionPromptWindow(client, seconds);
+        prompt.Closed += (_, _) => promptGate.MarkClosed();
+        prompt.Show();
     }
 
     public void Dispose()

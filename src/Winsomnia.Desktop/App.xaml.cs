@@ -49,7 +49,7 @@ public partial class App : System.Windows.Application
             {
                 status = await client.ReportBedtimeUnlockAsync();
                 var seconds = RestrictionPromptWindow.SecondsUntil(status.GraceUntilUtc, DateTimeOffset.UtcNow, 15);
-                new RestrictionPromptWindow(client, seconds).Show();
+                tray?.ShowRestrictionPrompt(seconds);
             }
         }
         catch
