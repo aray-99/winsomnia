@@ -10,6 +10,13 @@ Assert(RestrictionPromptWindow.SecondsUntil(now.AddSeconds(14.2), now, 30) == 15
 Assert(RestrictionPromptWindow.SecondsUntil(null, now, 15) == 15,
     "The prompt countdown fallback changed.");
 
+var promptGate = new PromptDisplayGate();
+Assert(promptGate.TryOpen(), "The first prompt request was rejected.");
+Assert(!promptGate.TryOpen(), "A concurrent prompt request opened a duplicate.");
+promptGate.MarkClosed();
+Assert(promptGate.TryOpen(), "A prompt could not reopen after the previous one closed.");
+promptGate.MarkClosed();
+
 var deactivation = new WindowCloseGate();
 Assert(deactivation.TryQueueClose(), "The first deactivation did not queue a close.");
 Assert(!deactivation.TryQueueClose(), "A repeated deactivation queued a second close.");
@@ -26,7 +33,7 @@ var directClose = new WindowCloseGate();
 directClose.MarkClosing();
 Assert(!directClose.TryQueueClose(), "A direct close allowed deactivation re-entry.");
 
-Console.WriteLine("PASS native unlock detection, grace countdown, and close re-entry safety");
+Console.WriteLine("PASS single prompt, native unlock, grace countdown, and close re-entry safety");
 return 0;
 
 static void Assert(bool condition, string message)
