@@ -41,7 +41,8 @@ public sealed class TrayController : IDisposable
             if (status.Phase == "restriction-prompt" && !promptVisible)
             {
                 promptVisible = true;
-                var prompt = new RestrictionPromptWindow(client);
+                var seconds = RestrictionPromptWindow.SecondsUntil(status.GraceUntilUtc, DateTimeOffset.UtcNow, 30);
+                var prompt = new RestrictionPromptWindow(client, seconds);
                 prompt.Closed += (_, _) => promptVisible = false;
                 prompt.Show();
             }

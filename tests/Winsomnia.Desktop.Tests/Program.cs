@@ -1,5 +1,15 @@
 using Winsomnia.Desktop;
 
+Assert(SessionUnlockMonitor.IsUnlockMessage(0x02B1, new IntPtr(8)),
+    "A Windows session-unlock message was not recognized.");
+Assert(!SessionUnlockMonitor.IsUnlockMessage(0x02B1, new IntPtr(7)),
+    "A session-lock message was treated as unlock.");
+var now = DateTimeOffset.UtcNow;
+Assert(RestrictionPromptWindow.SecondsUntil(now.AddSeconds(14.2), now, 30) == 15,
+    "The prompt countdown did not match the engine grace deadline.");
+Assert(RestrictionPromptWindow.SecondsUntil(null, now, 15) == 15,
+    "The prompt countdown fallback changed.");
+
 var deactivation = new WindowCloseGate();
 Assert(deactivation.TryQueueClose(), "The first deactivation did not queue a close.");
 Assert(!deactivation.TryQueueClose(), "A repeated deactivation queued a second close.");
@@ -16,7 +26,7 @@ var directClose = new WindowCloseGate();
 directClose.MarkClosing();
 Assert(!directClose.TryQueueClose(), "A direct close allowed deactivation re-entry.");
 
-Console.WriteLine("PASS status window close requests are one-shot and re-entry safe");
+Console.WriteLine("PASS native unlock detection, grace countdown, and close re-entry safety");
 return 0;
 
 static void Assert(bool condition, string message)
