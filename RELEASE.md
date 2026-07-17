@@ -18,9 +18,11 @@
 
 ```powershell
 .\build-release.ps1
+.\build-desktop.ps1
 .\scripts\Test-RepositoryPolicy.ps1
 Get-Content .\dist\winsomnia-*.sha256
 ```
+正式版の利用者には、`dist\winsomnia-<version>-desktop.zip`を配布します。このZIPは`Winsomnia.Setup.exe`と、その隣にある`app`フォルダーを含むため、展開後のフォルダー構成を保ったままセットアップを実行します。導入後は[docs/INSTALL.md](docs/INSTALL.md)の安全確認とドライランを完了してから再開します。
 
 ## Tag and GitHub Release
 

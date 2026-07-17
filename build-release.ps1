@@ -44,6 +44,7 @@ try {
         'docs/EMERGENCY.md'
         'docs/ARCHITECTURE.md'
         'docs/IPC.md'
+        'docs/INSTALL.md'
         'winsomnia.ps1'
         'winsomnia-common.ps1'
         'winsomnia-monitor.ps1'
