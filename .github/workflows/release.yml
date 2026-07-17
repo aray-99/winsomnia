@@ -45,6 +45,7 @@ jobs:
           dotnet build .\Winsomnia.slnx -c Release
           dotnet run --project .\tests\Winsomnia.Core.Tests\Winsomnia.Core.Tests.csproj -c Release
           dotnet run --project .\tests\Winsomnia.Engine.Tests\Winsomnia.Engine.Tests.csproj -c Release
+          dotnet run --project .\tests\Winsomnia.Setup.Tests\Winsomnia.Setup.Tests.csproj -c Release
 
       - name: Build release files
         shell: powershell
