@@ -2,9 +2,9 @@ using System.Globalization;
 
 namespace Winsomnia.Desktop;
 
-internal static class Localization
+public static class Localization
 {
-    private static bool Japanese => CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "ja";
+    private static bool Japanese(CultureInfo culture) => culture.TwoLetterISOLanguageName == "ja";
 
     private static readonly IReadOnlyDictionary<string, (string English, string Japanese)> Values =
         new Dictionary<string, (string, string)>
@@ -34,5 +34,11 @@ internal static class Localization
             ["ReadOnly"] = ("This status panel has no controls.", "この状態パネルから設定や停止はできません。")
         };
 
-    public static string Text(string key) => Japanese ? Values[key].Japanese : Values[key].English;
+    public static IEnumerable<string> Keys => Values.Keys;
+
+    public static string Text(string key, CultureInfo? culture = null)
+    {
+        culture ??= CultureInfo.CurrentUICulture;
+        return Japanese(culture) ? Values[key].Japanese : Values[key].English;
+    }
 }
