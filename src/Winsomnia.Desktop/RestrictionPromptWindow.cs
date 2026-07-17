@@ -16,10 +16,15 @@ public sealed class RestrictionPromptWindow : Window
     private readonly TextBlock countdown = new() { FontSize = 28, HorizontalAlignment = HorizontalAlignment.Center };
     private readonly ComboBox minutes = new() { Width = 140 };
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(1) };
-    private int remaining = 30;
+    private int remaining;
 
-    public RestrictionPromptWindow(EngineClient client)
+    public static int SecondsUntil(DateTimeOffset? deadlineUtc, DateTimeOffset nowUtc, int fallbackSeconds) =>
+        deadlineUtc is null
+            ? Math.Clamp(fallbackSeconds, 1, 300)
+            : Math.Clamp((int)Math.Ceiling((deadlineUtc.Value - nowUtc).TotalSeconds), 1, 300);
+    public RestrictionPromptWindow(EngineClient client, int initialSeconds = 30)
     {
+        remaining = Math.Clamp(initialSeconds, 1, 300);
         this.client = client;
         Title = Localization.Text("RestrictionPrompt");
         Width = 520;
