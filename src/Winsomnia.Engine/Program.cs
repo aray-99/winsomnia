@@ -17,6 +17,12 @@ for (var index = 0; index < args.Length - 1; index++)
 
 var clock = new SystemClock();
 var manager = new StateManager(statePath, clock);
+if (args.Contains("--pause-state", StringComparer.OrdinalIgnoreCase))
+{
+    OfflineSafety.Pause(manager, legacyPath);
+    Console.WriteLine("winsomnia engine state is paused and the kill switch is present.");
+    return 0;
+}
 if (args.Contains("--activate-state", StringComparer.OrdinalIgnoreCase))
 {
     var offlineState = manager.LoadOrCreate(legacyPath) with { Armed = true };

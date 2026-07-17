@@ -16,7 +16,12 @@ var initial = new PersistentState
     Armed = false,
     Credit = CreditLedger.Full(CreditPolicy.Standard, clock.UtcNow)
 };
-manager.Save(initial);
+manager.Save(initial with { Armed = true });
+File.Delete(killSwitch);
+OfflineSafety.Pause(manager);
+var offlinePaused = manager.LoadOrCreate();
+Assert(!offlinePaused.Armed && File.Exists(killSwitch),
+    "Offline safety pause did not disarm state and restore the kill switch.");
 
 await using var host = new EngineHost(manager, clock, new NoOpWorkstationLocker(), false, pipeName: pipeName);
 using var shutdown = new CancellationTokenSource();
@@ -57,7 +62,7 @@ try
     await client.PauseAsync();
     status = await client.GetStatusAsync();
     Assert(status.Paused && File.Exists(killSwitch), "Safety pause did not restore the kill switch.");
-    Console.WriteLine("PASS named-pipe status, scoped cancellation, safe test, and explicit activation");
+    Console.WriteLine("PASS offline pause, named-pipe isolation, scoped cancellation, safe test, and activation");
 }
 finally
 {
