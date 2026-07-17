@@ -1,2 +1,5 @@
 testResults.xml
 dist/
+.tools/
+**/bin/
+**/obj/

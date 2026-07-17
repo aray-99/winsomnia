@@ -152,6 +152,13 @@ function Invoke-Resume {
         throw "Scheduled task '$taskName' is not installed. Run setup first."
     }
 
+    $installedEngine = Join-Path $env:LOCALAPPDATA 'Programs\winsomnia\Winsomnia.Engine.exe'
+    if (Test-Path -LiteralPath $installedEngine -PathType Leaf) {
+        & $installedEngine --activate-state
+        if ($LASTEXITCODE -ne 0) {
+            throw 'The v0.2 engine state could not be activated.'
+        }
+    }
     Remove-Item -LiteralPath $config.killSwitchPath -Force -ErrorAction SilentlyContinue
     Start-ScheduledTask -TaskName $taskName -ErrorAction Stop
     Write-Output "winsomnia is active for $($config.startTime)-$($config.endTime)."
@@ -184,6 +191,17 @@ function Show-Log {
 }
 
 function Invoke-UninstallCommand {
+    $installedSetup = Join-Path $env:LOCALAPPDATA 'Programs\winsomnia\Winsomnia.Setup.exe'
+    if (Test-Path -LiteralPath $installedSetup -PathType Leaf) {
+        if ($WhatIfPreference) {
+            Write-Output "What if: uninstall the v0.2 per-user application."
+            return
+        }
+        & $installedSetup uninstall
+        if ($LASTEXITCODE -ne 0) { throw 'The v0.2 uninstaller failed.' }
+        return
+    }
+
     $arguments = @{
         Action = 'Uninstall'
         ConfigPath = $ConfigPath

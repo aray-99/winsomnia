@@ -82,7 +82,7 @@ function Assert-ConventionalCommit {
 }
 
 function Assert-NoPrivateIdentifier {
-    $extensions = @('.md', '.ps1', '.json', '.yml', '.yaml', '.txt', '.xml')
+    $extensions = @('.md', '.ps1', '.json', '.yml', '.yaml', '.txt', '.xml', '.cs', '.csproj', '.xaml', '.resx', '.slnx')
     $blockedValues = @()
     if (-not [string]::IsNullOrWhiteSpace($env:WINSOMNIA_PRIVATE_IDENTIFIERS)) {
         $blockedValues = @($env:WINSOMNIA_PRIVATE_IDENTIFIERS -split '[;\r\n]+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })

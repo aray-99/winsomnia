@@ -20,6 +20,7 @@
 
 - [ ] PSScriptAnalyzer
 - [ ] Pester
+- [ ] .NET build and Core/IPC tests
 - [ ] Repository policy check
 - [ ] Release ZIP and SHA-256 inspection
 - [ ] Manual verification not run is listed below
