@@ -39,6 +39,7 @@ try {
 
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\EMERGENCY.md') -Destination $app
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\IPC.md') -Destination $app
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\INSTALL.md') -Destination $app
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'VERSION') -Destination $app
 
     $setupArguments = @('publish', (Join-Path $PSScriptRoot 'src\Winsomnia.Setup\Winsomnia.Setup.csproj'), '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '-p:PublishSingleFile=true', '-p:DebugType=None', '-o', $staging)
