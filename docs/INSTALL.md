@@ -32,4 +32,8 @@ If installation fails, leave the kill switch in place and keep the task disabled
 
 ## Updating or uninstalling
 
-Pause winsomnia before replacing an existing installation. Extract the new desktop package to a new folder and run its `Winsomnia.Setup.exe`; it preserves the user state while refreshing the installed binaries. To remove winsomnia, use the installed setup program with the `uninstall` argument. The kill switch and user data are retained.
+Pause winsomnia before replacing an existing installation. Extract the new desktop package to a new folder and run its `Winsomnia.Setup.exe`. The v0.3 installer creates and verifies the legacy kill switch, disables and stops both legacy task names, verifies that no Engine or legacy monitor remains, and migrates only settings into a disarmed v3 state. It stages and validates the complete payload before replacing the installed directory and registers the new task disabled. The v2 state file remains unchanged as a read-only migration source.
+
+If any step fails, setup returns a nonzero exit code after repeating the safety barrier. Do not resume until the legacy kill switch exists, `C:\temp\winsomnia-lock-enabled.json` is absent, Engine state is disarmed, and the `winsomnia` task is disabled.
+
+To remove winsomnia, use the installed setup program with the `uninstall` argument. Uninstall applies the same safety barrier before deleting tasks and binaries; the legacy kill switch and user data are retained.

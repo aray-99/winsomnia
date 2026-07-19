@@ -7,4 +7,8 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AssemblyName>Winsomnia.Setup</AssemblyName>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Winsomnia.Core/Winsomnia.Core.csproj" />
+    <ProjectReference Include="../Winsomnia.Engine/Winsomnia.Engine.csproj" />
+  </ItemGroup>
 </Project>
