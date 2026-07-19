@@ -11,6 +11,9 @@ var tests = new (string Name, Func<Task> Run)[]
     ("activation and pause failures latch denial", TestTransitionFailuresAsync),
     ("activation has no fallible post-commit save", TestNoPostCommitSaveAsync),
     ("concurrent clients serialize state transitions", TestConcurrentClientsAsync),
+    ("warning claims enforce policy boundaries", TestWarningEligibilityAsync),
+    ("warning claims are durable and monotonic", TestWarningClaimDurabilityAsync),
+    ("failed warning save never grants a claim", TestWarningClaimSaveFailureAsync),
     ("monitor uses fixed monotonic cadence", TestMonitorCadenceAsync),
     ("immediate pre-lock marker check denies", TestImmediatePreLockCheckAsync),
     ("single engine mutex rejects a second host", TestSingleEngineAsync),
@@ -262,6 +265,125 @@ static async Task TestOfflineCliLeaseAsync()
     }
     finally { await StopAsync(stop, running); }
 }
+static async Task TestWarningEligibilityAsync()
+{
+    var boundary = new DateTimeOffset(2026, 7, 17, 22, 55, 0, TimeSpan.FromHours(9));
+    var claim = await ClaimAtAsync(boundary);
+    Assert(claim.ShouldDisplay && claim.TransitionUtc == boundary.AddMinutes(5).ToUniversalTime(),
+        "The exact five-minute boundary was not claimable.");
+    Assert(!(await ClaimAtAsync(boundary.AddSeconds(-1))).ShouldDisplay,
+        "A warning more than five minutes early was claimable.");
+    Assert(!(await ClaimAtAsync(boundary.AddMinutes(5))).ShouldDisplay,
+        "A restricted period produced a warning claim.");
+    Assert(!(await ClaimAtAsync(boundary, armed: false)).ShouldDisplay,
+        "A paused Engine produced a warning claim.");
+    Assert(!(await ClaimAtAsync(boundary,
+        state => state with { Settings = state.Settings with { Enabled = false } })).ShouldDisplay,
+        "Disabled settings produced a warning claim.");
+    Assert(!(await ClaimAtAsync(boundary,
+        state => state with
+        {
+            Exceptions = [new ScheduledException("2026-07-17", state.Credit.LastAccrualUtc)]
+        })).ShouldDisplay,
+        "An exception date produced a warning claim.");
+    Assert(!(await ClaimAtAsync(boundary,
+        state => state with { OverrideUntilUtc = boundary.ToUniversalTime().AddMinutes(10) })).ShouldDisplay,
+        "An active credit override produced a warning claim.");
+}
+
+static async Task TestWarningClaimDurabilityAsync()
+{
+    var boundary = new DateTimeOffset(2026, 7, 17, 22, 55, 0, TimeSpan.FromHours(9));
+    using var fixture = new WarningFixture(boundary);
+    fixture.SaveArmed();
+    var run = await StartWarningHostAsync(fixture);
+    try
+    {
+        await run.Client.GetStatusAsync();
+        await run.Client.GetStatusAsync();
+        Assert(fixture.Manager.LoadOrCreate().LastClaimedWarningTransitionUtc is null,
+            "Read-only status persisted a warning claim.");
+        var first = await run.Client.SendAsync<WarningClaim>("claimWarning",
+            new { transitionUtc = boundary.AddYears(10) });
+        var repeated = await run.Client.ClaimWarningAsync();
+        Assert(first.ShouldDisplay && !repeated.ShouldDisplay &&
+            first.TransitionUtc == boundary.AddMinutes(5).ToUniversalTime() &&
+            first.TransitionUtc == repeated.TransitionUtc,
+            "Sequential claims did not produce exactly one display.");
+    }
+    finally { await run.DisposeAsync(); }
+
+    run = await StartWarningHostAsync(fixture);
+    try
+    {
+        Assert(!(await run.Client.ClaimWarningAsync()).ShouldDisplay,
+            "Engine restart reclaimed the same transition.");
+    }
+    finally { await run.DisposeAsync(); }
+
+    using var concurrentFixture = new WarningFixture(boundary);
+    concurrentFixture.SaveArmed();
+    run = await StartWarningHostAsync(concurrentFixture);
+    try
+    {
+        var claims = await Task.WhenAll(Enumerable.Range(0, 8)
+            .Select(_ => new EngineClient(run.PipeName).ClaimWarningAsync()));
+        Assert(claims.Count(item => item.ShouldDisplay) == 1,
+            "Concurrent Desktop clients did not produce exactly one claim.");
+
+        concurrentFixture.Clock.SetLocal(boundary.AddDays(1));
+        var nextDay = await run.Client.ClaimWarningAsync();
+        Assert(nextDay.ShouldDisplay && nextDay.TransitionUtc == boundary.AddDays(1).AddMinutes(5).ToUniversalTime(),
+            "A later restriction transition could not be claimed.");
+
+        concurrentFixture.Clock.SetLocal(boundary);
+        Assert(!(await run.Client.ClaimWarningAsync()).ShouldDisplay,
+            "Clock rollback reclaimed an older restriction transition.");
+    }
+    finally { await run.DisposeAsync(); }
+}
+
+static async Task TestWarningClaimSaveFailureAsync()
+{
+    var boundary = new DateTimeOffset(2026, 7, 17, 22, 55, 0, TimeSpan.FromHours(9));
+    using var fixture = new WarningFixture(boundary);
+    fixture.SaveArmed();
+    var run = await StartWarningHostAsync(fixture);
+    try
+    {
+        using (File.Open(fixture.Manager.StatePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            await AssertThrowsAsync(() => run.Client.ClaimWarningAsync(),
+                "A failed warning save returned a display claim.");
+        Assert(fixture.Manager.LoadOrCreate().LastClaimedWarningTransitionUtc is null,
+            "A failed warning save advanced the durable watermark.");
+        Assert((await run.Client.ClaimWarningAsync()).ShouldDisplay,
+            "A failed save consumed the warning claim in memory.");
+    }
+    finally { await run.DisposeAsync(); }
+}
+
+static async Task<WarningClaim> ClaimAtAsync(DateTimeOffset localNow,
+    Func<PersistentState, PersistentState>? configure = null, bool armed = true)
+{
+    using var fixture = new WarningFixture(localNow);
+    if (armed) fixture.SaveArmed(configure);
+    else fixture.SaveDisarmed(configure);
+    var run = await StartWarningHostAsync(fixture);
+    try { return await run.Client.ClaimWarningAsync(); }
+    finally { await run.DisposeAsync(); }
+}
+
+static async Task<WarningHostRun> StartWarningHostAsync(WarningFixture fixture)
+{
+    var stop = new CancellationTokenSource();
+    var pipe = $"winsomnia.engine.warning.test.{Guid.NewGuid():N}";
+    var host = new EngineHost(fixture.Manager, fixture.Clock, new CountingLocker(), true,
+        pipeName: pipe, markerStore: fixture.Store,
+        mutexName: $"Local\\winsomnia.engine.warning.test.{Guid.NewGuid():N}");
+    var running = host.RunAsync(stop.Token);
+    await Task.Delay(150);
+    return new WarningHostRun(host, stop, running, pipe);
+}
 static async Task RunBrieflyAsync(Fixture fixture, CountingLocker locker, ILockMarkerStore store, bool enabled)
 {
     using var stop = new CancellationTokenSource();
@@ -307,6 +429,69 @@ static async Task AssertThrowsAsync(Func<Task> action, string message)
     throw new InvalidOperationException(message);
 }
 
+sealed class MutableClock(DateTimeOffset localNow) : ISystemClock
+{
+    private DateTimeOffset current = localNow;
+    public DateTimeOffset UtcNow => current.ToUniversalTime();
+    public DateTimeOffset LocalNow => current;
+    public void SetLocal(DateTimeOffset value) => current = value;
+}
+sealed class WarningFixture : IDisposable
+{
+    public string Directory { get; } = Path.Combine(Path.GetTempPath(), $"winsomnia-warning-tests-{Guid.NewGuid():N}");
+    public string MarkerPath => Path.Combine(Directory, "lock-enabled.json");
+    public MutableClock Clock { get; }
+    public StateManager Manager { get; }
+    public LockMarkerStore Store { get; }
+    public WarningFixture(DateTimeOffset localNow)
+    {
+        System.IO.Directory.CreateDirectory(Directory);
+        Clock = new MutableClock(localNow);
+        Manager = new StateManager(Path.Combine(Directory, "state-v3.json"), Clock);
+        Store = new LockMarkerStore(MarkerPath);
+    }
+    public void SaveArmed(Func<PersistentState, PersistentState>? configure = null)
+    {
+        var id = Guid.NewGuid().ToString("N");
+        var state = BaseState() with { Armed = true, ActivationId = id };
+        Manager.Save(configure?.Invoke(state) ?? state);
+        Store.Commit(id);
+    }
+    public void SaveDisarmed(Func<PersistentState, PersistentState>? configure = null)
+    {
+        var state = BaseState();
+        Manager.Save(configure?.Invoke(state) ?? state);
+    }
+    private PersistentState BaseState() => new()
+    {
+        Settings = new UserSettings("23:00", "06:00", true, 5, CreditPolicy.Standard),
+        LogPath = Path.Combine(Directory, "engine.log"),
+        Credit = CreditLedger.Full(CreditPolicy.Standard, Clock.UtcNow)
+    };
+    public void Dispose()
+    {
+        var full = Path.GetFullPath(Directory);
+        if (!full.StartsWith(Path.GetFullPath(Path.GetTempPath()), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Refusing to remove non-temporary warning test directory.");
+        System.IO.Directory.Delete(full, true);
+    }
+}
+sealed class WarningHostRun(
+    EngineHost host,
+    CancellationTokenSource stop,
+    Task run,
+    string pipeName) : IAsyncDisposable
+{
+    public string PipeName { get; } = pipeName;
+    public EngineClient Client { get; } = new(pipeName);
+    public async ValueTask DisposeAsync()
+    {
+        stop.Cancel();
+        try { await run; } catch (OperationCanceledException) { }
+        await host.DisposeAsync();
+        stop.Dispose();
+    }
+}
 sealed class FixedClock : ISystemClock
 {
     public DateTimeOffset UtcNow { get; } = new(2026, 7, 17, 14, 30, 0, TimeSpan.Zero);
