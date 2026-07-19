@@ -29,7 +29,7 @@
 
 ## GUI release manual safety evidence
 
-<!-- Required only for release/* -> main PRs. Keep the evidence in the linked completed manual-test Issue. -->
+<!-- Required only for release/* -> main PRs. Link a CLOSED Issue in this repository with the manual-test label; keep the evidence in that Issue. -->
 
 Completed manual-test Issue: <!-- https://github.com/OWNER/REPOSITORY/issues/123 or #123 -->
 
