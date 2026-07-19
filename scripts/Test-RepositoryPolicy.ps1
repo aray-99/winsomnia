@@ -19,6 +19,10 @@ param(
     [string]$HeadSha,
 
     [Parameter()]
+    [AllowEmptyString()]
+    [string]$PullRequestBody,
+
+    [Parameter()]
     [string]$TagName
 )
 
@@ -31,6 +35,7 @@ $policyContext = [pscustomobject]@{
     HeadRef        = $HeadRef
     BaseSha        = $BaseSha
     HeadSha        = $HeadSha
+    PullRequestBody = $PullRequestBody
     TagName        = $TagName
 }
 
@@ -64,6 +69,38 @@ function Assert-PullRequestFlow {
 
     if (-not $allowed) {
         throw "Branch flow is not allowed: '$($policyContext.HeadRef)' -> '$($policyContext.BaseRef)'."
+    }
+}
+
+function Assert-GuiReleaseEvidence {
+    if ($policyContext.EventName -ne 'pull_request' -or
+        $policyContext.BaseRef -ne 'main' -or
+        $policyContext.HeadRef -notmatch '^release/[^/]+$') {
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace($policyContext.PullRequestBody)) {
+        throw 'A release PR to main requires completed GUI manual safety evidence in the PR body.'
+    }
+
+    $issueReferencePattern = '(?im)^[ \t]*Completed manual-test Issue:[ \t]*(?:https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[1-9][0-9]*|#[1-9][0-9]*)[ \t]*$'
+    if ($policyContext.PullRequestBody -notmatch $issueReferencePattern) {
+        throw 'A release PR to main must reference the completed manual-test GitHub Issue.'
+    }
+
+    $requiredScenarios = @(
+        'Notification warning was verified once for each of two restriction transitions.'
+        'Deleting the enable marker stopped locking, including after restart.'
+        'Alternate-account recovery was demonstrated or recorded as unavailable/conditional.'
+        'WinRE/Safe Mode recovery was demonstrated or recorded as unavailable/conditional.'
+        'The final state was safe: marker absent, Engine disarmed/paused, and task disabled.'
+    )
+
+    foreach ($scenario in $requiredScenarios) {
+        $escapedScenario = [regex]::Escape($scenario)
+        if ($policyContext.PullRequestBody -notmatch "(?im)^[ \t]*-[ \t]*\[x\][ \t]*$escapedScenario[ \t]*$") {
+            throw "A release PR to main must check the GUI safety evidence item: '$scenario'"
+        }
     }
 }
 
@@ -139,6 +176,7 @@ function Assert-ReleaseTag {
 }
 
 Assert-PullRequestFlow
+Assert-GuiReleaseEvidence
 Assert-ConventionalCommit
 Assert-NoPrivateIdentifier
 Assert-ReleaseTag

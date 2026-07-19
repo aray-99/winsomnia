@@ -57,13 +57,15 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           .\scripts\Test-RepositoryPolicy.ps1 `
             -EventName $env:EVENT_NAME `
             -BaseRef $env:BASE_REF `
             -HeadRef $env:HEAD_REF `
             -BaseSha $env:BASE_SHA `
-            -HeadSha $env:HEAD_SHA
+            -HeadSha $env:HEAD_SHA `
+            -PullRequestBody $env:PR_BODY
 
       - name: Run tests
         shell: powershell
