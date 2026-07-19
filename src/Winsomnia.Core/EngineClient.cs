@@ -32,6 +32,9 @@ public sealed class EngineClient
     public async Task<EngineStatus> GetStatusAsync(CancellationToken cancellationToken = default) =>
         await SendAsync<EngineStatus>("status", new { }, cancellationToken);
 
+    public Task<WarningClaim> ClaimWarningAsync(CancellationToken cancellationToken = default) =>
+        SendAsync<WarningClaim>("claimWarning", new { }, cancellationToken);
+
     public Task<EngineStatus> StageSettingsAsync(UserSettings settings, CancellationToken cancellationToken = default) =>
         SendAsync<EngineStatus>("stageSettings", settings, cancellationToken);
 
