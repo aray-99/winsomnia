@@ -112,6 +112,7 @@ public sealed record PersistentState
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "winsomnia", "winsomnia.log");
     public bool Armed { get; init; }
     public string? ActivationId { get; init; }
+    public DateTimeOffset? LastClaimedWarningTransitionUtc { get; init; }
 }
 
 public static class LockAuthorizationStates
@@ -122,6 +123,8 @@ public static class LockAuthorizationStates
 }
 
 public sealed record LockAuthorization(string State, string Reason);
+
+public sealed record WarningClaim(bool ShouldDisplay, DateTimeOffset? TransitionUtc);
 
 public sealed record EngineStatus(
     UserSettings Settings,

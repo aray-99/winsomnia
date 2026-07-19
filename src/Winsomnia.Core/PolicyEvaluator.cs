@@ -28,7 +28,8 @@ public static class PolicyEvaluator
             .Concat(activeSessions.Select(session => session.RelockIntervalSeconds)).Min();
         if (interval == int.MaxValue) interval = rawState.Settings.RelockIntervalSeconds;
         var next = TimeRules.NextTransition(rawState.Settings, localNow).ToUniversalTime();
-        var warning = !scheduleActive && next > utcNow && next - utcNow <= TimeSpan.FromMinutes(5);
+        var warning = rawState.Settings.Enabled && !exception && !scheduleActive && !overridden &&
+            !bedtimeGrace && next > utcNow && next - utcNow <= TimeSpan.FromMinutes(5);
         var phase = overridden ? "credit-override" : bedtimeGrace ? "restriction-prompt" :
             shouldLock ? "restricted" : warning ? "warning" : "waiting";
         return new(shouldLock, bedtime, interval, sessions, phase, next);

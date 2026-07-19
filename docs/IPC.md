@@ -31,6 +31,7 @@ Unknown protocol versions and commands fail without changing state.
 | Command | Purpose |
 | --- | --- |
 | `status` | Return pause, restriction, credit, pending-change, session state, and `LockAuthorization` (`Disarmed`, `Armed`, or `Faulted` with a reason). |
+| `claimWarning` | Atomically claim the current five-minute warning. Returns `WarningClaim(ShouldDisplay, TransitionUtc)`; only the first durable claim for a newer restriction transition can display it. |
 | `stageSettings` | Validate replacement settings and stage them for UTC now + 24 hours. |
 | `cancelPendingSettings` | Remove a pending replacement; active settings are unchanged. |
 | `scheduleException` | Add a local date only when its restriction start is at least 24 hours away. |
@@ -46,4 +47,9 @@ Unknown protocol versions and commands fail without changing state.
 `startSession` validates duration (1 second to 8 hours), relock interval (1 to
 3600 seconds), and grace (0 to 300 seconds). External sessions cannot change
 winsomnia settings, consume winsomnia credit, or grant lock authorization.
+
+The Engine derives `claimWarning`'s transition from its own clock and active
+policy; clients cannot submit a transition. Claims are at-most-once across
+clients and Engine restarts. A failed state save returns an error and never
+authorizes a notification. `status` does not claim a warning.
 

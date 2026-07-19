@@ -88,6 +88,31 @@ var directClose = new WindowCloseGate();
 directClose.MarkClosing();
 Assert(!directClose.TryQueueClose(), "A direct close allowed deactivation re-entry.");
 
+var notification = new CountingWarningNotification();
+var claimStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+var releaseClaim = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+var claimCalls = 0;
+var warningClaims = new WarningClaimCoordinator(async cancellationToken =>
+{
+    Interlocked.Increment(ref claimCalls);
+    claimStarted.SetResult();
+    await releaseClaim.Task.WaitAsync(cancellationToken);
+    return new WarningClaim(true, DateTimeOffset.UtcNow);
+}, notification);
+var firstPoll = warningClaims.PollAsync();
+await claimStarted.Task;
+await warningClaims.PollAsync();
+releaseClaim.SetResult();
+await firstPoll;
+Assert(claimCalls == 1 && notification.Displays == 1,
+    "Async timer re-entry duplicated a warning claim or notification.");
+
+var rejectedNotification = new CountingWarningNotification();
+var rejectedClaim = new WarningClaimCoordinator(
+    _ => Task.FromResult(new WarningClaim(false, DateTimeOffset.UtcNow)), rejectedNotification);
+await rejectedClaim.PollAsync();
+Assert(rejectedNotification.Displays == 0,
+    "A rejected Engine claim displayed a notification.");
 Console.WriteLine("PASS localization, DPI, keyboard, system colors, scrolling, prompt, unlock, and close safety");
 return 0;
 
@@ -108,4 +133,10 @@ static string FindRepositoryRoot()
     while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Winsomnia.slnx")))
         directory = directory.Parent;
     return directory?.FullName ?? throw new DirectoryNotFoundException("Repository root was not found.");
+}
+
+sealed class CountingWarningNotification : IWarningNotification
+{
+    public int Displays { get; private set; }
+    public void Show() => Displays++;
 }
