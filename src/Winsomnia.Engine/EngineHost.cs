@@ -194,6 +194,7 @@ public sealed class EngineHost : IAsyncDisposable
             switch (request.Command)
             {
                 case "status": return ApiResponse.Success(request.Id, CreateStatus());
+                case "claimWarning": return ApiResponse.Success(request.Id, ClaimWarning());
                 case "stageSettings":
                     state = stateManager.StageSettings(state, request.Payload.Deserialize<UserSettings>(JsonOptions)
                         ?? throw new InvalidDataException("Settings missing."));
@@ -313,6 +314,23 @@ public sealed class EngineHost : IAsyncDisposable
             authorization, decision.BedtimeRestricted, decision.Phase, decision.NextTransitionUtc,
             state.Credit.BalanceMinutes, state.PendingSettings?.ApplyAtUtc, state.OverrideUntilUtc,
             state.BedtimeGraceUntilUtc, decision.ActiveSessions, error);
+    }
+
+    private WarningClaim ClaimWarning()
+    {
+        var authorization = InspectAuthorization();
+        var decision = PolicyEvaluator.Evaluate(state, clock.UtcNow, clock.LocalNow,
+            authorization.State == LockAuthorizationStates.Armed);
+        var transition = decision.Phase == "warning" ? decision.NextTransitionUtc : null;
+        if (transition is null ||
+            state.LastClaimedWarningTransitionUtc is not null &&
+            transition <= state.LastClaimedWarningTransitionUtc)
+            return new(false, transition);
+
+        var claimed = state with { LastClaimedWarningTransitionUtc = transition };
+        stateManager.Save(claimed);
+        state = claimed;
+        return new(true, transition);
     }
 
     private void AppendLog(string message, string level = "INFO")

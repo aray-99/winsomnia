@@ -11,6 +11,7 @@ public sealed class TrayController : IDisposable
     private readonly Forms.NotifyIcon icon;
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(5) };
     private readonly PromptDisplayGate promptGate = new();
+    private readonly WarningClaimCoordinator warningClaims;
 
     public TrayController(EngineClient client)
     {
@@ -21,6 +22,7 @@ public sealed class TrayController : IDisposable
             Text = "winsomnia",
             Visible = true
         };
+        warningClaims = new WarningClaimCoordinator(client.ClaimWarningAsync, new TrayWarningNotification(icon));
         icon.MouseUp += (_, e) =>
         {
             if (e.Button == Forms.MouseButtons.Left) new StatusWindow(client).Show();
@@ -36,8 +38,7 @@ public sealed class TrayController : IDisposable
         {
             var status = await client.GetStatusAsync();
             icon.Text = $"winsomnia: {status.Phase}, {status.CreditMinutes} min";
-            if (status.Phase == "warning")
-                icon.ShowBalloonTip(5000, "winsomnia", "Restriction starts in five minutes / 5分後に制限を開始します", Forms.ToolTipIcon.Info);
+            await warningClaims.PollAsync();
             if (status.Phase == "restriction-prompt")
             {
                 var seconds = RestrictionPromptWindow.SecondsUntil(status.GraceUntilUtc, DateTimeOffset.UtcNow, 30);
