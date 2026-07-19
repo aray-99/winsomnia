@@ -11,10 +11,10 @@ public sealed record PolicyDecision(
 public static class PolicyEvaluator
 {
     public static PolicyDecision Evaluate(PersistentState rawState, DateTimeOffset utcNow, DateTimeOffset localNow,
-        bool killSwitchPresent)
+        bool lockingAuthorized)
     {
         var sessions = rawState.Sessions.Where(session => session.IsActive(utcNow)).ToList();
-        if (killSwitchPresent || !rawState.Armed)
+        if (!lockingAuthorized)
             return new(false, false, rawState.Settings.RelockIntervalSeconds, sessions, "paused", null);
 
         var exception = rawState.Exceptions.Any(item => item.Date == TimeRules.RestrictionStartDate(rawState.Settings, localNow));

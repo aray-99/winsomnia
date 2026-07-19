@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.IO.Pipes;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 using Winsomnia.Core;
 
 namespace Winsomnia.Engine;
@@ -14,68 +16,98 @@ public sealed class EngineHost : IAsyncDisposable
     {
         PropertyNameCaseInsensitive = true
     };
-
     private readonly StateManager stateManager;
     private readonly ISystemClock clock;
     private readonly IWorkstationLocker locker;
+    private readonly ILockMarkerStore markerStore;
     private readonly bool realLockEnabled;
     private readonly string pipeName;
-    private readonly SemaphoreSlim stateGate = new(1, 1);
+    private readonly string mutexName;
+    private readonly Channel<byte> stateGate = CreateStateGate();
     private readonly CancellationTokenSource stop = new();
     private PersistentState state;
     private DateTimeOffset nextLockUtc = DateTimeOffset.MinValue;
     private string? lastError;
+    private bool authorizationDenialLatched;
 
     public EngineHost(StateManager stateManager, ISystemClock clock, IWorkstationLocker locker,
-        bool realLockEnabled, string? legacyConfigPath = null, string? pipeName = null)
+        bool realLockEnabled, string? legacyStatePath = null, string? legacyConfigPath = null,
+        string? pipeName = null, ILockMarkerStore? markerStore = null, string? mutexName = null)
     {
         this.stateManager = stateManager;
         this.clock = clock;
         this.locker = locker;
         this.realLockEnabled = realLockEnabled;
         this.pipeName = string.IsNullOrWhiteSpace(pipeName) ? GetPipeName() : pipeName;
-        state = stateManager.LoadOrCreate(legacyConfigPath);
+        this.markerStore = markerStore ?? new LockMarkerStore();
+        this.mutexName = string.IsNullOrWhiteSpace(mutexName) ? GetMutexName() : mutexName;
+        state = stateManager.LoadOrCreate(legacyStatePath, legacyConfigPath);
     }
 
-    public static string GetPipeName()
+    private static string UserDigest()
     {
-        var identity = WindowsIdentity.GetCurrent();
+        using var identity = WindowsIdentity.GetCurrent();
         var sid = identity.User?.Value ?? Environment.UserName;
-        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sid))).ToLowerInvariant()[..16];
-        return $"winsomnia.engine.v1.{digest}";
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sid))).ToLowerInvariant()[..16];
     }
+
+    public static string GetPipeName() => $"winsomnia.engine.v2.{UserDigest()}";
+    public static string GetMutexName() => $"Local\\winsomnia.engine.v2.{UserDigest()}";
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
+        using var lease = new EngineInstanceLease(mutexName);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(stop.Token, cancellationToken);
-        var monitor = MonitorAsync(linked.Token);
-        var server = AcceptClientsAsync(linked.Token);
-        await Task.WhenAll(monitor, server);
+        await Task.WhenAll(MonitorAsync(linked.Token), AcceptClientsAsync(linked.Token));
     }
+
+    private static Channel<byte> CreateStateGate()
+    {
+        var channel = Channel.CreateBounded<byte>(new BoundedChannelOptions(1)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
+            SingleReader = false,
+            SingleWriter = false,
+            AllowSynchronousContinuations = true
+        });
+        if (!channel.Writer.TryWrite(0)) throw new InvalidOperationException("State gate initialization failed.");
+        return channel;
+    }
+
+    private ValueTask<byte> EnterStateGateAsync(CancellationToken cancellationToken) =>
+        stateGate.Reader.ReadAsync(cancellationToken);
+
+    private void ExitStateGate()
+    {
+        if (!stateGate.Writer.TryWrite(0)) throw new InvalidOperationException("State gate release failed.");
+    }
+    private LockAuthorization InspectAuthorization() => authorizationDenialLatched
+        ? new(LockAuthorizationStates.Faulted, "runtime-denial-latched")
+        : markerStore.Inspect(state, realLockEnabled);
 
     private async Task MonitorAsync(CancellationToken cancellationToken)
     {
+        var nextCheck = Stopwatch.GetTimestamp();
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
-                await stateGate.WaitAsync(cancellationToken);
+                await EnterStateGateAsync(cancellationToken);
                 try
                 {
                     state = stateManager.Normalize(state);
-                    var killSwitch = File.Exists(state.KillSwitchPath) || Directory.Exists(state.KillSwitchPath);
+                    var authorization = InspectAuthorization();
                     var scheduleActive = TimeRules.IsRestricted(state.Settings, clock.LocalNow) &&
                         !state.Exceptions.Any(item => item.Date == TimeRules.RestrictionStartDate(state.Settings, clock.LocalNow));
                     if (scheduleActive && state.OverrideUntilUtc is null && state.BedtimeGraceUntilUtc is null)
                         state = state with { BedtimeGraceUntilUtc = clock.UtcNow.AddSeconds(30) };
-                    if (!scheduleActive)
-                        state = state with { BedtimeGraceUntilUtc = null };
-                    var decision = PolicyEvaluator.Evaluate(state, clock.UtcNow, clock.LocalNow, killSwitch);
+                    if (!scheduleActive) state = state with { BedtimeGraceUntilUtc = null };
+                    var authorized = authorization.State == LockAuthorizationStates.Armed;
+                    var decision = PolicyEvaluator.Evaluate(state, clock.UtcNow, clock.LocalNow, authorized);
                     if (decision.ShouldLock && clock.UtcNow >= nextLockUtc)
                     {
-                        // Re-check immediately before the only user-visible irreversible action.
-                        killSwitch = File.Exists(state.KillSwitchPath) || Directory.Exists(state.KillSwitchPath);
-                        if (!killSwitch && realLockEnabled)
+                        var immediate = InspectAuthorization();
+                        if (immediate.State == LockAuthorizationStates.Armed)
                         {
                             locker.Lock();
                             AppendLog("Lock requested by engine.");
@@ -87,25 +119,29 @@ public sealed class EngineHost : IAsyncDisposable
                         nextLockUtc = DateTimeOffset.MinValue;
                     }
                     stateManager.Save(state);
-                    lastError = null;
+                    lastError = authorization.State == LockAuthorizationStates.Faulted ? authorization.Reason : null;
                 }
-                finally
-                {
-                    stateGate.Release();
-                }
+                finally { ExitStateGate(); }
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                break;
-            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
             catch (Exception exception)
             {
-                // Fail without locking and retain the external kill switch state.
+                authorizationDenialLatched = true;
                 nextLockUtc = DateTimeOffset.MaxValue;
                 lastError = exception.Message;
                 AppendLog($"Engine monitor paused after error: {exception.Message}", "ERROR");
             }
-            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+            nextCheck += Stopwatch.Frequency;
+            var remainingTicks = nextCheck - Stopwatch.GetTimestamp();
+            if (remainingTicks > 0)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(
+                    (double)remainingTicks / Stopwatch.Frequency), cancellationToken);
+            }
+            else
+            {
+                nextCheck = Stopwatch.GetTimestamp();
+            }
         }
     }
 
@@ -140,35 +176,29 @@ public sealed class EngineHost : IAsyncDisposable
             {
                 var request = JsonSerializer.Deserialize<ApiRequest>(line ?? string.Empty, JsonOptions)
                     ?? throw new InvalidDataException("Request was empty.");
-                response = request.Version == 1
+                response = request.Version == 2
                     ? await ExecuteAsync(request, cancellationToken)
                     : ApiResponse.Failure(request.Id, "Unsupported protocol version.");
             }
-            catch (Exception exception)
-            {
-                response = ApiResponse.Failure(string.Empty, exception.Message);
-            }
+            catch (Exception exception) { response = ApiResponse.Failure(string.Empty, exception.Message); }
             await writer.WriteLineAsync(JsonSerializer.Serialize(response, JsonOptions));
         }
     }
 
     private async Task<ApiResponse> ExecuteAsync(ApiRequest request, CancellationToken cancellationToken)
     {
-        await stateGate.WaitAsync(cancellationToken);
+        await EnterStateGateAsync(cancellationToken);
         try
         {
             state = stateManager.Normalize(state);
             switch (request.Command)
             {
-                case "status":
-                    return ApiResponse.Success(request.Id, CreateStatus());
+                case "status": return ApiResponse.Success(request.Id, CreateStatus());
                 case "stageSettings":
-                    state = stateManager.StageSettings(state,
-                        request.Payload.Deserialize<UserSettings>(JsonOptions) ?? throw new InvalidDataException("Settings missing."));
+                    state = stateManager.StageSettings(state, request.Payload.Deserialize<UserSettings>(JsonOptions)
+                        ?? throw new InvalidDataException("Settings missing."));
                     break;
-                case "cancelPendingSettings":
-                    state = state with { PendingSettings = null };
-                    break;
+                case "cancelPendingSettings": state = state with { PendingSettings = null }; break;
                 case "scheduleException":
                     var exception = request.Payload.Deserialize<ScheduleExceptionPayload>(JsonOptions)
                         ?? throw new InvalidDataException("Exception date missing.");
@@ -183,8 +213,7 @@ public sealed class EngineHost : IAsyncDisposable
                 case "startSession":
                     var start = request.Payload.Deserialize<StartSessionPayload>(JsonOptions)
                         ?? throw new InvalidDataException("Session request missing.");
-                    var kind = Enum.Parse<SessionKind>(start.Kind, true);
-                    var created = LockSession.Create(kind, start.Source, clock.UtcNow,
+                    var created = LockSession.Create(Enum.Parse<SessionKind>(start.Kind, true), start.Source, clock.UtcNow,
                         TimeSpan.FromSeconds(start.DurationSeconds), start.RelockIntervalSeconds,
                         start.UnlockGraceSeconds, start.Cancelable);
                     state = state with { Sessions = state.Sessions.Append(created.Session).ToList() };
@@ -202,69 +231,88 @@ public sealed class EngineHost : IAsyncDisposable
                 case "reportUnlock":
                     var unlock = request.Payload.Deserialize<ReportUnlockPayload>(JsonOptions)
                         ?? throw new InvalidDataException("Session identifier missing.");
-                    state = state with
-                    {
-                        Sessions = state.Sessions.Select(item => item.Id == unlock.SessionId
-                            ? item with { GraceUntilUtc = clock.UtcNow.AddSeconds(item.UnlockGraceSeconds) }
-                            : item).ToList()
-                    };
+                    state = state with { Sessions = state.Sessions.Select(item => item.Id == unlock.SessionId
+                        ? item with { GraceUntilUtc = clock.UtcNow.AddSeconds(item.UnlockGraceSeconds) } : item).ToList() };
                     break;
-                case "reportBedtimeUnlock":
-                    state = state with { BedtimeGraceUntilUtc = clock.UtcNow.AddSeconds(15) };
-                    break;
-                case "endBedtimeGrace":
-                    state = state with { BedtimeGraceUntilUtc = clock.UtcNow };
-                    break;
+                case "reportBedtimeUnlock": state = state with { BedtimeGraceUntilUtc = clock.UtcNow.AddSeconds(15) }; break;
+                case "endBedtimeGrace": state = state with { BedtimeGraceUntilUtc = clock.UtcNow }; break;
                 case "safeTest":
                     state.Settings.Validate();
-                    if (!File.Exists(state.KillSwitchPath) && !Directory.Exists(state.KillSwitchPath))
-                        throw new InvalidOperationException("Safe test requires the kill switch to exist.");
+                    if (InspectAuthorization().State == LockAuthorizationStates.Armed)
+                        throw new InvalidOperationException("Safe test requires locking to be disarmed.");
                     break;
                 case "activate":
-                    var activation = request.Payload.Deserialize<ActivationPayload>(JsonOptions)
-                        ?? throw new InvalidDataException("Activation confirmation missing.");
-                    if (activation.Confirmation != "ACTIVATE") throw new InvalidDataException("Explicit activation confirmation is required.");
-                    if (Directory.Exists(state.KillSwitchPath))
-                        throw new InvalidOperationException("A directory kill switch must be removed manually after review.");
-                    state = state with { Armed = true };
-                    stateManager.Save(state);
-                    if (File.Exists(state.KillSwitchPath)) File.Delete(state.KillSwitchPath);
-                    break;
+                    Activate(request);
+                    return ApiResponse.Success(request.Id, CreateStatus());
                 case "pause":
-                    EnsureKillSwitch();
-                    state = state with { Armed = false };
-                    break;
-                default:
-                    return ApiResponse.Failure(request.Id, "Unknown command.");
+                    Pause();
+                    return ApiResponse.Success(request.Id, CreateStatus());
+                default: return ApiResponse.Failure(request.Id, "Unknown command.");
             }
             stateManager.Save(state);
             return ApiResponse.Success(request.Id, CreateStatus());
         }
-        catch (Exception exception)
+        catch (Exception exception) { return ApiResponse.Failure(request.Id, exception.Message); }
+        finally { ExitStateGate(); }
+    }
+
+    private void Activate(ApiRequest request)
+    {
+        var activation = request.Payload.Deserialize<ActivationPayload>(JsonOptions)
+            ?? throw new InvalidDataException("Activation confirmation missing.");
+        if (activation.Confirmation != "ACTIVATE")
+            throw new InvalidDataException("Explicit activation confirmation is required.");
+        var activationId = Guid.NewGuid().ToString("N");
+        try
         {
-            return ApiResponse.Failure(request.Id, exception.Message);
+            state = state with { Armed = true, ActivationId = activationId };
+            stateManager.Save(state);
+            markerStore.Commit(activationId);
+            authorizationDenialLatched = false;
+            lastError = null;
         }
-        finally
+        catch
         {
-            stateGate.Release();
+            authorizationDenialLatched = true;
+            try { markerStore.Revoke(); } catch { }
+            try
+            {
+                state = state with { Armed = false, ActivationId = null };
+                stateManager.Save(state);
+            }
+            catch { }
+            throw;
         }
+    }
+
+    private void Pause()
+    {
+        authorizationDenialLatched = true;
+        state = state with { Armed = false, ActivationId = null };
+        try
+        {
+            stateManager.Save(state);
+        }
+        catch
+        {
+            try { markerStore.Revoke(); } catch { }
+            throw;
+        }
+        markerStore.Revoke();
+        authorizationDenialLatched = false;
+        lastError = null;
     }
 
     private EngineStatus CreateStatus()
     {
-        var paused = File.Exists(state.KillSwitchPath) || Directory.Exists(state.KillSwitchPath) || !state.Armed;
-        var decision = PolicyEvaluator.Evaluate(state, clock.UtcNow, clock.LocalNow, paused);
-        return new EngineStatus(state.Settings, paused, state.Armed, decision.BedtimeRestricted, decision.Phase,
-            decision.NextTransitionUtc, state.Credit.BalanceMinutes, state.PendingSettings?.ApplyAtUtc,
-            state.OverrideUntilUtc, state.BedtimeGraceUntilUtc, decision.ActiveSessions, lastError);
-    }
-
-    private void EnsureKillSwitch()
-    {
-        var parent = Path.GetDirectoryName(state.KillSwitchPath)!;
-        Directory.CreateDirectory(parent);
-        if (!File.Exists(state.KillSwitchPath) && !Directory.Exists(state.KillSwitchPath))
-            File.WriteAllText(state.KillSwitchPath, string.Empty);
+        var authorization = InspectAuthorization();
+        var decision = PolicyEvaluator.Evaluate(state, clock.UtcNow, clock.LocalNow,
+            authorization.State == LockAuthorizationStates.Armed);
+        var error = authorization.State == LockAuthorizationStates.Faulted ? authorization.Reason : lastError;
+        return new EngineStatus(state.Settings, authorization.State != LockAuthorizationStates.Armed, state.Armed,
+            authorization, decision.BedtimeRestricted, decision.Phase, decision.NextTransitionUtc,
+            state.Credit.BalanceMinutes, state.PendingSettings?.ApplyAtUtc, state.OverrideUntilUtc,
+            state.BedtimeGraceUntilUtc, decision.ActiveSessions, error);
     }
 
     private void AppendLog(string message, string level = "INFO")
@@ -275,17 +323,13 @@ public sealed class EngineHost : IAsyncDisposable
             File.AppendAllText(state.LogPath,
                 $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss} [{level}] {message}{Environment.NewLine}");
         }
-        catch
-        {
-            // Logging failure must not trigger a lock or remove a safety control.
-        }
+        catch { }
     }
 
     public ValueTask DisposeAsync()
     {
         stop.Cancel();
         stop.Dispose();
-        stateGate.Dispose();
         return ValueTask.CompletedTask;
     }
 }

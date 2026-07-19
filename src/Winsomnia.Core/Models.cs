@@ -100,7 +100,7 @@ public sealed record LockSession(
 
 public sealed record PersistentState
 {
-    public int SchemaVersion { get; init; } = 2;
+    public int SchemaVersion { get; init; } = 3;
     public UserSettings Settings { get; init; } = new();
     public PendingSettings? PendingSettings { get; init; }
     public List<ScheduledException> Exceptions { get; init; } = [];
@@ -108,16 +108,26 @@ public sealed record PersistentState
     public DateTimeOffset? OverrideUntilUtc { get; init; }
     public DateTimeOffset? BedtimeGraceUntilUtc { get; init; }
     public List<LockSession> Sessions { get; init; } = [];
-    public string KillSwitchPath { get; init; } = @"C:\temp\win-somnia-unlock.txt";
     public string LogPath { get; init; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "winsomnia", "winsomnia.log");
     public bool Armed { get; init; }
+    public string? ActivationId { get; init; }
 }
+
+public static class LockAuthorizationStates
+{
+    public const string Disarmed = "Disarmed";
+    public const string Armed = "Armed";
+    public const string Faulted = "Faulted";
+}
+
+public sealed record LockAuthorization(string State, string Reason);
 
 public sealed record EngineStatus(
     UserSettings Settings,
     bool Paused,
     bool Armed,
+    LockAuthorization LockAuthorization,
     bool Restricted,
     string Phase,
     DateTimeOffset? NextTransitionUtc,

@@ -25,7 +25,7 @@ public sealed class EngineClient
         {
             var sid = WindowsIdentity.GetCurrent().User?.Value ?? Environment.UserName;
             var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sid))).ToLowerInvariant()[..16];
-            return $"winsomnia.engine.v1.{digest}";
+            return $"winsomnia.engine.v2.{digest}";
         }
     }
 
@@ -63,7 +63,7 @@ public sealed class EngineClient
         using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, true);
         using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, true) { AutoFlush = true };
         var id = Guid.NewGuid().ToString("N");
-        await writer.WriteLineAsync(JsonSerializer.Serialize(new { version = 1, id, command, payload }, JsonOptions));
+        await writer.WriteLineAsync(JsonSerializer.Serialize(new { version = 2, id, command, payload }, JsonOptions));
         var line = await reader.ReadLineAsync(cancellationToken) ?? throw new IOException("Engine closed the pipe.");
         using var document = JsonDocument.Parse(line);
         var root = document.RootElement;

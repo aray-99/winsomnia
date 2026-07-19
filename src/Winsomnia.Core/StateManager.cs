@@ -24,25 +24,14 @@ public sealed class StateManager(string statePath, ISystemClock clock)
 
     public string StatePath { get; } = Path.GetFullPath(statePath);
 
-    public PersistentState LoadOrCreate(string? legacyConfigPath = null)
+    public PersistentState LoadOrCreate(string? legacyStatePath = null, string? legacyConfigPath = null)
     {
-        if (File.Exists(StatePath))
-        {
-            var state = JsonSerializer.Deserialize<PersistentState>(File.ReadAllText(StatePath), JsonOptions)
-                ?? throw new InvalidDataException("State file was empty.");
-            Validate(state);
-            return Normalize(state);
-        }
-
-        var migrated = legacyConfigPath is not null && File.Exists(legacyConfigPath)
-            ? MigrateLegacy(legacyConfigPath)
-            : new PersistentState
-            {
-                Credit = CreditLedger.Full(CreditPolicy.Standard, clock.UtcNow),
-                Armed = false
-            };
-        Save(migrated);
-        return migrated;
+        if (File.Exists(StatePath)) return LoadCurrentOrMigrate(StatePath);
+        var migrationPath = new[] { legacyStatePath, legacyConfigPath }
+            .FirstOrDefault(path => path is not null && File.Exists(path));
+        var state = migrationPath is null ? CreateDisarmed() : MigrateSettingsOnly(migrationPath);
+        Save(state);
+        return state;
     }
 
     public void Save(PersistentState state)
@@ -50,9 +39,17 @@ public sealed class StateManager(string statePath, ISystemClock clock)
         Validate(state);
         var parent = Path.GetDirectoryName(StatePath)!;
         Directory.CreateDirectory(parent);
-        var temporary = StatePath + ".tmp";
-        File.WriteAllText(temporary, JsonSerializer.Serialize(state, JsonOptions));
-        File.Move(temporary, StatePath, true);
+        var temporary = Path.Combine(parent,
+            $".{Path.GetFileName(StatePath)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            File.WriteAllText(temporary, JsonSerializer.Serialize(state, JsonOptions));
+            File.Move(temporary, StatePath, true);
+        }
+        finally
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+        }
     }
 
     public PersistentState Normalize(PersistentState state)
@@ -65,16 +62,13 @@ public sealed class StateManager(string statePath, ISystemClock clock)
             settings = pending.Settings;
             pending = null;
         }
-
         var policy = settings.EffectiveCredit;
         var checkpoint = state.Credit.LastAccrualUtc;
-        // Never move an accrual checkpoint backwards when the system clock rolls back.
         var elapsed = now > checkpoint ? now - checkpoint : TimeSpan.Zero;
         var wholeDays = (int)Math.Floor(elapsed.TotalDays);
         var balance = Math.Min(policy.MaximumMinutes,
             state.Credit.BalanceMinutes + wholeDays * policy.DailyGrantMinutes);
         if (wholeDays > 0) checkpoint = checkpoint.AddDays(wholeDays);
-
         return state with
         {
             Settings = settings,
@@ -117,36 +111,95 @@ public sealed class StateManager(string statePath, ISystemClock clock)
         return state with { Exceptions = exceptions };
     }
 
-    private PersistentState MigrateLegacy(string path)
+    private PersistentState LoadCurrentOrMigrate(string path)
     {
         using var document = JsonDocument.Parse(File.ReadAllText(path));
         var root = document.RootElement;
-        if (!root.TryGetProperty("schemaVersion", out var schema) || schema.GetInt32() != 1)
-            throw new InvalidDataException("Only schema version 1 can be migrated.");
-        var settings = new UserSettings(
-            root.GetProperty("startTime").GetString()!,
-            root.GetProperty("endTime").GetString()!,
-            true,
-            root.GetProperty("intervalSeconds").GetInt32(),
-            CreditPolicy.Standard);
+        var schema = ReadSchema(root);
+        if (schema is 1 or 2)
+        {
+            var migrated = MigrateSettingsOnly(root, schema);
+            Save(migrated);
+            return migrated;
+        }
+        if (schema != 3) throw new InvalidDataException("Unsupported state schema version.");
+        var state = root.Deserialize<PersistentState>(JsonOptions)
+            ?? throw new InvalidDataException("State file was empty.");
+        Validate(state);
+        return Normalize(state);
+    }
+
+    private PersistentState MigrateSettingsOnly(string path)
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        return MigrateSettingsOnly(document.RootElement, ReadSchema(document.RootElement));
+    }
+
+    private PersistentState MigrateSettingsOnly(JsonElement root, int schema)
+    {
+        UserSettings settings = schema switch
+        {
+            1 => new UserSettings(GetProperty(root, "startTime").GetString()!,
+                GetProperty(root, "endTime").GetString()!, true,
+                GetProperty(root, "intervalSeconds").GetInt32(), CreditPolicy.Standard),
+            2 => GetProperty(root, "settings").Deserialize<UserSettings>(JsonOptions)
+                ?? throw new InvalidDataException("Version 2 settings were empty."),
+            _ => throw new InvalidDataException("Only schema versions 1 and 2 can be migrated.")
+        };
         settings.Validate();
         return new PersistentState
         {
             Settings = settings,
             Credit = CreditLedger.Full(settings.EffectiveCredit, clock.UtcNow),
-            KillSwitchPath = root.GetProperty("killSwitchPath").GetString()!,
-            LogPath = root.GetProperty("logPath").GetString()!,
-            Armed = false
+            Armed = false,
+            ActivationId = null
         };
+    }
+
+    private PersistentState CreateDisarmed() => new()
+    {
+        Credit = CreditLedger.Full(CreditPolicy.Standard, clock.UtcNow),
+        Armed = false,
+        ActivationId = null
+    };
+
+    private static int ReadSchema(JsonElement root)
+    {
+        if (!TryGetProperty(root, "schemaVersion", out var value) ||
+            value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var version))
+            throw new InvalidDataException("State schema version is missing or invalid.");
+        return version;
+    }
+
+    private static JsonElement GetProperty(JsonElement root, string name) =>
+        TryGetProperty(root, name, out var value)
+            ? value
+            : throw new InvalidDataException($"Required property '{name}' is missing.");
+
+    private static bool TryGetProperty(JsonElement root, string name, out JsonElement value)
+    {
+        foreach (var property in root.EnumerateObject())
+        {
+            if (property.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+            {
+                value = property.Value;
+                return true;
+            }
+        }
+        value = default;
+        return false;
     }
 
     private static void Validate(PersistentState state)
     {
-        if (state.SchemaVersion != 2) throw new InvalidDataException("Unsupported state schema version.");
+        if (state.SchemaVersion != 3) throw new InvalidDataException("Unsupported state schema version.");
         state.Settings.Validate();
         state.PendingSettings?.Settings.Validate();
-        if (!Path.IsPathFullyQualified(state.KillSwitchPath) || !Path.IsPathFullyQualified(state.LogPath))
-            throw new InvalidDataException("Safety paths must be absolute.");
+        if (!Path.IsPathFullyQualified(state.LogPath)) throw new InvalidDataException("Log path must be absolute.");
+        if (state.Armed && !Guid.TryParseExact(state.ActivationId, "N", out _))
+            throw new InvalidDataException("Armed state requires a valid activation ID.");
+        if (!state.Armed && state.ActivationId is not null)
+            throw new InvalidDataException("Disarmed state cannot retain an activation ID.");
         if (state.Credit.BalanceMinutes < 0 || state.Credit.BalanceMinutes > state.Settings.EffectiveCredit.MaximumMinutes)
             throw new InvalidDataException("Credit balance is outside the configured range.");
     }
