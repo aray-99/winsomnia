@@ -25,6 +25,10 @@ winsomnia UI, schedule, unlock credits, or persisted settings.
   marker so deletion failure remains restart-safe. The immediate check is a
   conservative TOCTOU reduction, not a claim that hostile local filesystem races
   are fully eliminated.
+- External marker deletion denies subsequent authorization but does not itself
+  persist `Armed=false`, unlock the current Windows screen, or cancel an
+  asynchronous `LockWorkStation` request that has already been issued. The
+  Desktop pause command is the normal durable disarm operation.
 - One per-user named mutex permits only one Engine, including offline state
   commands. A FIFO gate serializes client transitions and monitor decisions.
   Monitor checks use a monotonic one-second cadence rather than work plus delay.

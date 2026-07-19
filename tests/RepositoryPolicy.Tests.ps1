@@ -1,4 +1,4 @@
-BeforeAll {
+﻿BeforeAll {
     $script:RepoRoot = Split-Path -Parent $PSScriptRoot
     $script:PolicyPath = Join-Path $script:RepoRoot 'scripts\Test-RepositoryPolicy.ps1'
     $script:WorkflowPath = Join-Path $script:RepoRoot '.github\workflows\ci.yml'
@@ -47,6 +47,43 @@ BeforeAll {
             ManualEvidenceIssueState = 'CLOSED'
             ManualEvidenceIssueLabels = @('safety', 'manual-test')
         }
+    }
+}
+
+Describe 'Emergency recovery documentation policy' {
+    BeforeAll {
+        $script:EmergencyPath = Join-Path $script:RepoRoot 'docs\EMERGENCY.md'
+        $script:Emergency = Get-Content -LiteralPath $script:EmergencyPath -Raw
+    }
+
+    It 'keeps the exact signed-in v0.3 marker deletion and verification commands' {
+        $expected = @"
+Remove-Item -LiteralPath 'C:\temp\winsomnia-lock-enabled.json' -Force -ErrorAction SilentlyContinue
+Test-Path -LiteralPath 'C:\temp\winsomnia-lock-enabled.json'
+"@.Trim()
+
+        $script:Emergency | Should -Match ([regex]::Escape($expected))
+        $script:Emergency | Should -Match '(?s)期待結果:\s*```text\s*False\s*```'
+    }
+
+    It 'distinguishes v0.3 deletion from v0.2 legacy-switch creation' {
+        $script:Emergency | Should -Match '### v0\.3'
+        $script:Emergency | Should -Match '### v0\.2\.x'
+        $script:Emergency | Should -Match "New-Item -ItemType File -LiteralPath 'C:\\temp\\win-somnia-unlock\.txt' -Force"
+        $script:Emergency | Should -Match "Get-ScheduledTask -TaskName 'winsomnia','win-somnia'"
+    }
+
+    It 'keeps the exact WinRE marker absence check and volume discovery' {
+        $script:Emergency | Should -Match '(?s)diskpart\s*list volume\s*exit'
+        $script:Emergency | Should -Match ([regex]::Escape('del /f /q "%OSVOL%\temp\winsomnia-lock-enabled.json" 2>nul'))
+        $script:Emergency | Should -Match ([regex]::Escape('if not exist "%OSVOL%\temp\winsomnia-lock-enabled.json" echo MARKER_ABSENT'))
+    }
+
+    It 'does not overstate what marker deletion accomplishes' {
+        $script:Emergency | Should -Match 'Armed=false'
+        $script:Emergency | Should -Match '現在表示中のロック画面を解除しません'
+        $script:Emergency | Should -Match 'すでに発行された非同期の `LockWorkStation` 要求を取り消しません'
+        $script:Emergency | Should -Match '制御実機試験が完了するまでは、到達可能または実証済みとは扱いません'
     }
 }
 
