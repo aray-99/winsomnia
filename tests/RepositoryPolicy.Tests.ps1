@@ -1,4 +1,4 @@
-BeforeAll {
+﻿BeforeAll {
     $script:RepoRoot = Split-Path -Parent $PSScriptRoot
     $script:PolicyPath = Join-Path $script:RepoRoot 'scripts\Test-RepositoryPolicy.ps1'
     $script:WorkflowPath = Join-Path $script:RepoRoot '.github\workflows\ci.yml'
@@ -47,6 +47,66 @@ BeforeAll {
             ManualEvidenceIssueState = 'CLOSED'
             ManualEvidenceIssueLabels = @('safety', 'manual-test')
         }
+    }
+}
+
+Describe 'Emergency recovery documentation policy' {
+    BeforeAll {
+        $script:EmergencyPath = Join-Path $script:RepoRoot 'docs\EMERGENCY.md'
+        $script:Emergency = Get-Content -LiteralPath $script:EmergencyPath -Raw
+    }
+
+    It 'keeps the exact signed-in v0.3 marker deletion and verification commands' {
+        $expected = @"
+Remove-Item -LiteralPath 'C:\temp\winsomnia-lock-enabled.json' -Force -ErrorAction SilentlyContinue
+Test-Path -LiteralPath 'C:\temp\winsomnia-lock-enabled.json'
+"@.Trim()
+
+        $script:Emergency | Should -Match ([regex]::Escape($expected))
+        $script:Emergency | Should -Match '(?s)期待結果:\s*```text\s*False\s*```'
+    }
+
+    It 'distinguishes v0.3 deletion from v0.2 legacy-switch creation' {
+        $script:Emergency | Should -Match '### v0\.3'
+        $script:Emergency | Should -Match '### v0\.2\.x'
+        $script:Emergency | Should -Match "New-Item -ItemType File -LiteralPath 'C:\\temp\\win-somnia-unlock\.txt' -Force"
+        $script:Emergency | Should -Match ([regex]::Escape("Stop-ScheduledTask -TaskName 'winsomnia' -ErrorAction SilentlyContinue"))
+        $script:Emergency | Should -Match ([regex]::Escape("Disable-ScheduledTask -TaskName 'winsomnia'"))
+        $script:Emergency | Should -Match ([regex]::Escape("Get-ScheduledTask -TaskName 'winsomnia' | Select-Object TaskName, State"))
+        $script:Emergency | Should -Match '(?s)### v0\.2\.x.*?\$taskNames = @\(''winsomnia'',''win-somnia''\).*?### バージョンが分からない'
+    }
+
+    It 'documents durable v0.3 disarm before process shutdown and containment fallback' {
+        $script:Emergency | Should -Match 'marker が `False` で Engine がまだ動作している間に、Desktop の `Pause / 一時停止`'
+        $script:Emergency | Should -Match '`Armed: No`、認可状態が `Disarmed`'
+        $script:Emergency | Should -Match 'Desktop または IPC が利用できない場合は、marker 削除とタスク停止・無効化までを緊急 containment'
+        $script:Emergency | Should -Match 'Setup の safety barrier'
+        $script:Emergency | Should -Match '内部 Engine CLI は復旧手順として公開・使用しません'
+        $script:Emergency | Should -Match ([regex]::Escape("Where-Object ProcessName -EQ 'Winsomnia.Engine'"))
+        $script:Emergency | Should -Match 'Desktop tray は残る設計です'
+        $script:Emergency | Should -Match 'tray の終了はロック安全性の必須条件ではありません'
+    }
+
+    It 'reports unknown-version task and process outcomes explicitly' {
+        $script:Emergency | Should -Match ([regex]::Escape('$taskNames = @(''winsomnia'',''win-somnia'')'))
+        $script:Emergency | Should -Match "State = 'MISSING'"
+        $script:Emergency | Should -Match ([regex]::Escape('$task | Stop-ScheduledTask'))
+        $script:Emergency | Should -Match ([regex]::Escape('$task | Disable-ScheduledTask | Out-Null'))
+        $script:Emergency | Should -Match 'V03Processes'
+        $script:Emergency | Should -Match 'LegacyProcesses'
+    }
+
+    It 'keeps the exact WinRE marker absence check and volume discovery' {
+        $script:Emergency | Should -Match '(?s)diskpart\s*list volume\s*exit'
+        $script:Emergency | Should -Match ([regex]::Escape('del /f /q "%OSVOL%\temp\winsomnia-lock-enabled.json" 2>nul'))
+        $script:Emergency | Should -Match ([regex]::Escape('if not exist "%OSVOL%\temp\winsomnia-lock-enabled.json" echo MARKER_ABSENT'))
+    }
+
+    It 'does not overstate what marker deletion accomplishes' {
+        $script:Emergency | Should -Match 'Armed=false'
+        $script:Emergency | Should -Match '現在表示中のロック画面を解除しません'
+        $script:Emergency | Should -Match 'すでに発行された非同期の `LockWorkStation` 要求を取り消しません'
+        $script:Emergency | Should -Match '制御実機試験が完了するまでは、到達可能または実証済みとは扱いません'
     }
 }
 

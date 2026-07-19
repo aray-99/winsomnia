@@ -1,70 +1,204 @@
 # Emergency recovery
 
-画面ロックが繰り返される、設定時刻を過ぎてもロックが止まらない、またはモニターを終了できない場合の復旧手順です。
+画面ロックが繰り返される場合は、利用中のバージョンに対応する安全操作を行います。バージョンが分からない場合は、両方の操作を行ってください。
 
-## 最短手順：別の管理者アカウント
+## 重要な制限
 
-1. ロック画面または Ctrl+Alt+Delete 画面から「ユーザーの切り替え」を選択します。
-2. あらかじめ作成した非常用ローカル管理者アカウントへログインします。
-3. Windows TerminalまたはPowerShellを「管理者として実行」します。
-4. 次を実行します。
+- v0.3 の enable marker 削除は、それ以降のロック認可を拒否しますが、state の `Armed=false` を永続化しません。サインインできたら Desktop の `Pause / 一時停止` も実行してください。
+- marker や旧 kill switch は、現在表示中のロック画面を解除しません。
+- marker 削除は、すでに発行された非同期の `LockWorkStation` 要求を取り消しません。削除直後に一度ロックされる可能性があります。
+- `LockWorkStation` の成功値やログは、画面が実際にロックされた証拠ではありません。
+- 以下の WinRE、別アカウント、Safe Mode 経路は端末構成に依存します。Issue #38 の制御実機試験が完了するまでは、到達可能または実証済みとは扱いません。
 
-~~~powershell
-New-Item -ItemType Directory -Path C:\temp -Force
-New-Item -ItemType File -Path C:\temp\win-somnia-unlock.txt -Force
-Stop-ScheduledTask -TaskName winsomnia -ErrorAction SilentlyContinue
-Disable-ScheduledTask -TaskName winsomnia
-~~~
+Microsoft 公式資料:
 
-5. 元のユーザーへ切り替えてログインします。
+- [LockWorkStation function](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-lockworkstation)
+- [Windows Recovery Environment](https://support.microsoft.com/en-US/Windows/Experience/Backup-Recovery/windows-recovery-environment)
+- [Windows startup settings](https://support.microsoft.com/en-us/windows/experience/startup-boot/windows-startup-settings)
 
-キルスイッチは現在表示中のWindowsロック画面を解除しません。作成後に通常どおり一度ログインすると、再ロックが止まります。
+## サインイン済みの Windows
 
-## 復旧確認
+管理者 PowerShell で、バージョンに応じた手順を実行します。
 
-非常用管理者アカウントで次を確認します。
+### v0.3
 
-~~~powershell
-Test-Path C:\temp\win-somnia-unlock.txt
-Get-ScheduledTask -TaskName winsomnia |
-    Select-Object TaskName, State
-~~~
+次の2行をそのまま実行します。
 
-Test-PathがTrueで、タスクがDisabledなら安全停止状態です。原因を確認するまでキルスイッチを削除しないでください。
+```powershell
+Remove-Item -LiteralPath 'C:\temp\winsomnia-lock-enabled.json' -Force -ErrorAction SilentlyContinue
+Test-Path -LiteralPath 'C:\temp\winsomnia-lock-enabled.json'
+```
 
-v0.2以降のEngineでも同じキルスイッチが全ロックセッションに優先します。Engineの状態は`%LOCALAPPDATA%\winsomnia\state-v2.json`にありますが、緊急時に直接編集しないでください。タスクを停止・無効化し、通常の設定画面または診断手順から復旧します。
+期待結果:
 
-## 別アカウントを使えない場合
+```text
+False
+```
 
-サインイン画面でShiftキーを押しながら「電源」→「再起動」を選択します。その後、「トラブルシューティング」→「詳細オプション」→「スタートアップ設定」→「再起動」→セーフモードを選択します。
+`False` でなければ安全停止を確認できていません。タスクを有効化しないでください。
 
-セーフモードではPINや生体認証ではなく、アカウントのパスワードが必要になる場合があります。BitLockerが有効なPCでは回復キーが必要になる場合もあります。
+marker が `False` で Engine がまだ動作している間に、Desktop の `Pause / 一時停止` を実行します。画面上の操作結果が成功で、`Armed: No`、認可状態が `Disarmed` であることを目視確認します。これが `Armed=false` を永続化する通常の手順です。その後、管理者 PowerShell でタスクを停止・無効化し、状態と Engine プロセスを確認します。
 
-Microsoft公式資料：
+```powershell
+$ErrorActionPreference = 'Stop'
+Stop-ScheduledTask -TaskName 'winsomnia' -ErrorAction SilentlyContinue
+Disable-ScheduledTask -TaskName 'winsomnia'
+Get-ScheduledTask -TaskName 'winsomnia' | Select-Object TaskName, State
+@(Get-Process | Where-Object ProcessName -EQ 'Winsomnia.Engine').Count
+```
 
-- [Windowsのサインイン問題とセーフモード](https://support.microsoft.com/en-gb/windows/troubleshoot-problems-signing-in-to-windows-298cfd5f-df1f-c66b-36ad-f2a61a73baad)
-- [Windows回復環境](https://support.microsoft.com/en-us/windows/windows-recovery-environment-0eb14733-6301-41cb-8d26-06a12b42770b)
+タスクの `State` は `Disabled`、最後の Engine 件数は `0` である必要があります。エラー、別の状態、または0以外の件数が出た場合は完了と扱いません。MainWindow を閉じても Desktop tray は残る設計です。Desktop はロック API を所有しないため、tray の終了はロック安全性の必須条件ではありません。必要なら通常の Windows プロセス終了操作で終了できます。
 
-セーフモードへログイン後、管理者PowerShellでキルスイッチを作成し、タスクを無効化します。
+Desktop または IPC が利用できない場合は、marker 削除とタスク停止・無効化までを緊急 containment として行います。この状態では以後の認可を拒否できますが、state が永続的に `Armed=false` になったとは断定できません。タスクを無効のままにし、後で Setup の safety barrier を実行するか、Desktop を手動起動して `Pause / 一時停止` の目視確認を完了してから Desktop を停止してください。内部 Engine CLI は復旧手順として公開・使用しません。
 
-~~~powershell
-New-Item -ItemType Directory -Path C:\temp -Force
-New-Item -ItemType File -Path C:\temp\win-somnia-unlock.txt -Force
-Disable-ScheduledTask -TaskName winsomnia
-~~~
+### v0.2.x
 
-## 再起動だけでは停止にならない
+v0.2.x は肯定的 marker を認識しないため、旧 kill switch を作成します。
 
-キルスイッチが存在しない状態で通常再起動すると、元のユーザーがログオンした時点でモニターが再起動します。必ずキルスイッチ作成またはタスク無効化まで行ってください。
+```powershell
+New-Item -ItemType Directory -LiteralPath 'C:\temp' -Force | Out-Null
+New-Item -ItemType File -LiteralPath 'C:\temp\win-somnia-unlock.txt' -Force | Out-Null
+Test-Path -LiteralPath 'C:\temp\win-somnia-unlock.txt'
+$ErrorActionPreference = 'Stop'
+$taskNames = @('winsomnia','win-somnia')
+$allTasks = @(Get-ScheduledTask)
+foreach ($taskName in $taskNames) {
+    $task = $allTasks | Where-Object TaskName -EQ $taskName
+    if ($null -eq $task) {
+        [pscustomobject]@{ TaskName = $taskName; State = 'MISSING' }
+        continue
+    }
+    $task | Stop-ScheduledTask
+    $task | Disable-ScheduledTask | Out-Null
+}
+$allTasks = @(Get-ScheduledTask)
+foreach ($taskName in $taskNames) {
+    $task = $allTasks | Where-Object TaskName -EQ $taskName
+    if ($null -eq $task) {
+        [pscustomobject]@{ TaskName = $taskName; State = 'MISSING' }
+    }
+    else {
+        $task | Select-Object TaskName, State
+    }
+}
+@(Get-CimInstance Win32_Process | Where-Object {
+    $_.Name -In 'powershell.exe','pwsh.exe' -and
+    $_.CommandLine -Match 'win-somnia|winsomnia-monitor'
+}).Count
+```
 
-## 安全を確認して再開する
+`Test-Path` の期待結果は `True`、`winsomnia` と `win-somnia` はそれぞれ `Disabled` または `MISSING` です。最後の件数は winsomnia の旧 PowerShell runtime を対象とし、`0` である必要があります。エラー、その他の状態、または0以外の件数が出た場合は完了と扱いません。原因を確認するまで旧 kill switch を削除しません。
 
-原因を解決し、ドライランが成功してから元のユーザーで実行します。
+### バージョンが分からない
 
-~~~powershell
-Enable-ScheduledTask -TaskName winsomnia
-.\winsomnia.ps1 test -TestDurationSeconds 60
-.\winsomnia.ps1 resume
-~~~
+両方の安全操作を行い、v0.3 の `winsomnia` と v0.2.x の `win-somnia` の両タスクを停止・無効化します。コマンド失敗を抑制せず、各タスクを `Disabled` または `MISSING` として明示的に確認します。
 
-非常用アカウントは日常利用せず、パスワードはスマートフォンのパスワードマネージャー、または封印した紙などPC外に保管してください。
+```powershell
+New-Item -ItemType Directory -LiteralPath 'C:\temp' -Force | Out-Null
+Remove-Item -LiteralPath 'C:\temp\winsomnia-lock-enabled.json' -Force -ErrorAction SilentlyContinue
+New-Item -ItemType File -LiteralPath 'C:\temp\win-somnia-unlock.txt' -Force | Out-Null
+Test-Path -LiteralPath 'C:\temp\winsomnia-lock-enabled.json'
+Test-Path -LiteralPath 'C:\temp\win-somnia-unlock.txt'
+$ErrorActionPreference = 'Stop'
+$taskNames = @('winsomnia','win-somnia')
+$allTasks = @(Get-ScheduledTask)
+foreach ($taskName in $taskNames) {
+    $task = $allTasks | Where-Object TaskName -EQ $taskName
+    if ($null -eq $task) {
+        [pscustomobject]@{ TaskName = $taskName; State = 'MISSING' }
+        continue
+    }
+    $task | Stop-ScheduledTask
+    $task | Disable-ScheduledTask | Out-Null
+}
+$allTasks = @(Get-ScheduledTask)
+foreach ($taskName in $taskNames) {
+    $task = $allTasks | Where-Object TaskName -EQ $taskName
+    if ($null -eq $task) {
+        [pscustomobject]@{ TaskName = $taskName; State = 'MISSING' }
+    }
+    else {
+        $task | Select-Object TaskName, State
+    }
+}
+$v03ProcessCount = @(Get-Process | Where-Object ProcessName -EQ 'Winsomnia.Engine').Count
+$legacyProcessCount = @(Get-CimInstance Win32_Process | Where-Object {
+    $_.Name -In 'powershell.exe','pwsh.exe' -and
+    $_.CommandLine -Match 'win-somnia|winsomnia-monitor'
+}).Count
+[pscustomobject]@{ V03Processes = $v03ProcessCount; LegacyProcesses = $legacyProcessCount }
+```
+
+最初の `Test-Path` は `False`、次は `True` である必要があります。両タスクは `Disabled` または `MISSING`、最後の `V03Processes` と `LegacyProcesses` はどちらも `0` である必要があります。例外、その他の状態、または0以外の件数が出た場合は安全停止を確認できていません。v0.3 の state を durable disarm したことは、この不明バージョン手順だけでは断定せず、後で Setup の safety barrier または Desktop の `Pause / 一時停止` で確認します。
+
+## サインイン画面または別の管理者
+
+利用可能なら「ユーザーの切り替え」から、あらかじめ用意したローカル管理者へサインインし、管理者 PowerShell で上記手順を実行します。アカウントの有無、端末設定、資格情報によって利用できない場合があります。別アカウントから必ず操作できることや、ロックが特定セッションだけに影響することを前提にしないでください。
+
+## Windows Recovery Environment の Command Prompt
+
+サインイン画面の電源メニューで利用可能なら、Shift を押しながら「再起動」し、「トラブルシューティング」→「詳細オプション」→「コマンド プロンプト」へ進みます。表示されない場合は、Microsoft の Windows RE 文書にある回復ドライブ、インストールメディア、または端末メーカー固有の手段が必要です。強制的な起動失敗はデータ損失の危険があるため通常手順として案内しません。
+
+WinRE では Windows ボリュームが `C:` とは限りません。まず確認します。
+
+```bat
+diskpart
+list volume
+exit
+```
+
+候補ごとに、`D:` を実際のボリューム文字へ置き換えて確認します。
+
+```bat
+dir D:\Windows\System32\Config\SYSTEM
+```
+
+以下では確認済みの Windows ボリュームを `D:` とします。
+
+### v0.3
+
+```bat
+set "OSVOL=D:"
+del /f /q "%OSVOL%\temp\winsomnia-lock-enabled.json" 2>nul
+if not exist "%OSVOL%\temp\winsomnia-lock-enabled.json" echo MARKER_ABSENT
+```
+
+`MARKER_ABSENT` が表示されなければ安全停止を確認できていません。
+
+### v0.2.x
+
+```bat
+set "OSVOL=D:"
+if not exist "%OSVOL%\temp" md "%OSVOL%\temp"
+type nul > "%OSVOL%\temp\win-somnia-unlock.txt"
+if exist "%OSVOL%\temp\win-somnia-unlock.txt" echo LEGACY_SWITCH_PRESENT
+```
+
+### バージョンが分からない
+
+```bat
+set "OSVOL=D:"
+if not exist "%OSVOL%\temp" md "%OSVOL%\temp"
+del /f /q "%OSVOL%\temp\winsomnia-lock-enabled.json" 2>nul
+type nul > "%OSVOL%\temp\win-somnia-unlock.txt"
+if not exist "%OSVOL%\temp\winsomnia-lock-enabled.json" echo MARKER_ABSENT
+if exist "%OSVOL%\temp\win-somnia-unlock.txt" echo LEGACY_SWITCH_PRESENT
+```
+
+WinRE の `schtasks` はオフライン Windows のタスクを無効化する手順として使いません。通常 Windows へ戻ってサインインできたら、PowerShell の「バージョンが分からない」手順で両タスクを停止・無効化し、v0.3 では Desktop の `Pause / 一時停止` も実行します。
+
+## BitLocker、ドライブ文字、Safe Mode の条件
+
+- 暗号化されたボリュームでは、Windows RE のツール利用時に BitLocker 回復キーが必要になる場合があります。回復キーを確認できない状態で保護を解除しないでください。
+- 必要なら `manage-bde -status` で確認し、Microsoft の [manage-bde unlock](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/manage-bde-unlock) に従います。ボリューム文字と回復キーを推測しません。
+- WinRE のドライブ文字は通常起動時と異なる場合があります。`diskpart` の `list volume` と Windows ディレクトリの確認を省略しません。
+- Safe Mode with Command Prompt は、Windows RE の「スタートアップ設定」に選択肢があり、その端末で利用できる場合だけ使用します。PIN や生体認証ではなくパスワードが必要になる場合があります。
+- Safe Mode に到達しても、タスク、資格情報、暗号化、端末ポリシーの違いにより同じ操作ができるとは限りません。証跡のない経路を保証しません。
+
+## 復旧後の確認
+
+サインイン後、該当バージョンの手順にある `Test-Path`、タスク状態、プロセス件数を再確認します。v0.3 の最終安全状態は marker が `False`、Desktop の目視結果または Setup safety barrier で Engine が `Armed=false`、タスクが `Disabled` または `MISSING`、Winsomnia.Engine の件数が `0` です。v0.2.x では旧 kill switch が `True`、両タスクが `Disabled` または `MISSING`、旧 winsomnia monitor の件数が `0` であることも確認します。Desktop tray は残っていてもロック安全性へ影響しません。不確実なら再開せず、旧 kill switch を保持します。
+
+## 再開
+
+原因究明と承認済みの手動試験が完了するまで再開しません。marker 作成、タスク有効化、実ロック、再起動はそれぞれ直前に明示的な承認が必要です。

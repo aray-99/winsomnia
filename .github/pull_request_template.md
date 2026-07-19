@@ -11,8 +11,8 @@
 ## Safety checklist
 
 - [ ] winsomnia remained paused while developing.
-- [ ] No real lock, task enable/start, kill-switch removal, or reboot was performed without explicit approval.
-- [ ] Bounded dry-run and kill-switch behavior remain covered by tests.
+- [ ] No real lock, marker creation, Engine arm, task enable/start, legacy-switch removal, or reboot was performed without explicit approval.
+- [ ] Bounded authorization-denial behavior remains covered by isolated-marker and fake-locker tests.
 - [ ] `docs/EMERGENCY.md` was reviewed and updated if recovery behavior changed.
 - [ ] Public files and the release ZIP were checked for private identifiers and local paths.
 

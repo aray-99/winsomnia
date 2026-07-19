@@ -6,10 +6,10 @@ These rules apply to every automated agent and human contributor working in this
 
 winsomnia can repeatedly lock an interactive Windows session. Treat every change as safety-sensitive.
 
-- Keep the kill switch present while developing unless the user explicitly authorizes its removal for an immediate, controlled test.
-- Do not enable or start the scheduled task, invoke real locking, reboot Windows, or remove the kill switch without explicit approval in the current task.
-- Automated tests and CI must never pass `-EnableLock` unless the test first proves that a kill switch already exists and the process exits before the lock helper can run.
-- Prefer bounded `-DryRun` tests. Every loop must retain a bounded test mode and poll the kill switch at least once per second.
+- Keep the v0.3 enable marker absent, Engine state durably `Armed=false`, scheduled tasks disabled, and Winsomnia processes stopped while developing. During migration from v0.2.x, also keep the legacy kill switch present.
+- Do not create the enable marker, arm Engine state, enable or start a scheduled task, invoke real locking, reboot Windows, or remove the legacy kill switch without explicit approval in the current task.
+- Automated tests and CI must use an isolated marker path and fake locker. They must never pass `--enable-lock` to a process that can reach the Windows lock API.
+- Prefer bounded safety tests. Every monitoring loop must retain a bounded test mode, validate authorization at least once per second, and revalidate immediately before the injected locker.
 - A change to locking, scheduling, configuration, pause/resume, or recovery behavior requires corresponding safety tests and review of `docs/EMERGENCY.md`.
 - On uncertainty or validation failure, leave winsomnia paused and fail without locking.
 
@@ -19,7 +19,7 @@ Before changing files:
 
 1. Run `git status --short --branch` and inspect existing changes.
 2. Confirm the current branch is appropriate for the work.
-3. For runtime or safety work, confirm the kill switch exists and no monitor process is running.
+3. For runtime or safety work, confirm the v0.3 marker is absent, Engine is disarmed, scheduled tasks are disabled, and no Winsomnia process is running. During v0.2.x migration, also confirm the legacy kill switch exists.
 4. Read the affected implementation, tests, README, and emergency instructions before editing.
 
 Never overwrite unrelated user changes. Never use destructive Git commands unless the user explicitly approved the exact history operation.
