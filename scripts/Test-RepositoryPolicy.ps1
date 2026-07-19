@@ -159,8 +159,8 @@ function ConvertTo-VisibleMarkdown {
         [string]$Markdown
     )
 
-    $withoutHtmlComments = ConvertTo-MarkdownWithoutHtmlComment -Markdown $Markdown
-    return ConvertTo-MarkdownWithoutFencedCodeBlock -Markdown $withoutHtmlComments
+    $withoutFencedCode = ConvertTo-MarkdownWithoutFencedCodeBlock -Markdown $Markdown
+    return ConvertTo-MarkdownWithoutHtmlComment -Markdown $withoutFencedCode
 }
 
 function Get-ManualEvidenceIssueNumberFromBody {
@@ -173,7 +173,7 @@ function Get-ManualEvidenceIssueNumberFromBody {
 
     $normalizedBody = ConvertTo-VisibleMarkdown -Markdown $policyContext.PullRequestBody
     $escapedRepository = [regex]::Escape($policyContext.RepositoryFullName)
-    $issueReferencePattern = '(?im)^[ \t]*Completed manual-test Issue:[ \t]*(?:' +
+    $issueReferencePattern = '(?im)^ {0,3}Completed manual-test Issue:[ \t]*(?:' +
         "https://github\.com/$escapedRepository/issues/(?<urlNumber>[1-9][0-9]*)|#(?<shortNumber>[1-9][0-9]*))[ \t]*$"
     $issueReference = [regex]::Match($normalizedBody, $issueReferencePattern)
     if (-not $issueReference.Success) {
@@ -224,7 +224,7 @@ function Assert-GuiReleaseEvidence {
 
     foreach ($scenario in $requiredScenarios) {
         $escapedScenario = [regex]::Escape($scenario)
-        if ($visibleBody -notmatch "(?im)^[ \t]*-[ \t]*\[x\][ \t]*$escapedScenario[ \t]*$") {
+        if ($visibleBody -notmatch "(?im)^ {0,3}-[ \t]*\[x\][ \t]*$escapedScenario[ \t]*$") {
             throw "A release PR to main must check the GUI safety evidence item: '$scenario'"
         }
     }

@@ -128,6 +128,43 @@ Describe 'GUI release manual evidence repository policy' {
         } | Should -Throw -ExpectedMessage '*must check the GUI safety evidence item*'
     }
 
+    It 'rejects four-space indented Issue and checklist evidence' {
+        $parameters = Get-ValidPolicyContext
+        $fullyIndentedBody = ((Get-GuiEvidenceBody) -split "`n" | ForEach-Object { "    $_" }) -join "`n"
+
+        {
+            & $script:PolicyPath @parameters -PullRequestBody $fullyIndentedBody
+        } | Should -Throw -ExpectedMessage '*must reference a manual-test Issue in this repository*'
+
+        $tabIndentedBody = ((Get-GuiEvidenceBody) -split "`n" | ForEach-Object { "`t$_" }) -join "`n"
+        {
+            & $script:PolicyPath @parameters -PullRequestBody $tabIndentedBody
+        } | Should -Throw -ExpectedMessage '*must reference a manual-test Issue in this repository*'
+
+        $visibleIssueWithIndentedChecklist = Get-GuiEvidenceBody
+        foreach ($scenario in $script:RequiredScenarios) {
+            $visibleIssueWithIndentedChecklist = $visibleIssueWithIndentedChecklist.Replace("- [x] $scenario", "    - [x] $scenario")
+        }
+
+        {
+            & $script:PolicyPath @parameters -PullRequestBody $visibleIssueWithIndentedChecklist
+        } | Should -Throw -ExpectedMessage '*must check the GUI safety evidence item*'
+    }
+
+    It 'keeps visible evidence after an unterminated HTML comment inside a fence' {
+        $parameters = Get-ValidPolicyContext
+        $body = @(
+            '```text'
+            '<!-- literal example without a terminator'
+            '```'
+            (Get-GuiEvidenceBody)
+        ) -join "`n"
+
+        {
+            & $script:PolicyPath @parameters -PullRequestBody $body
+        } | Should -Not -Throw
+    }
+
     It 'rejects evidence hidden entirely in an HTML comment' {
         $parameters = Get-ValidPolicyContext
         $body = "<!--`n$(Get-GuiEvidenceBody)`n-->"
