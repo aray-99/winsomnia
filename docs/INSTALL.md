@@ -36,4 +36,6 @@ Pause winsomnia before replacing an existing installation. Extract the new deskt
 
 If any step fails, setup returns a nonzero exit code after repeating the safety barrier. Do not resume until the legacy kill switch exists, `C:\temp\winsomnia-lock-enabled.json` is absent, Engine state is disarmed, and the `winsomnia` task is disabled.
 
-To remove winsomnia, use the installed setup program with the `uninstall` argument. Uninstall applies the same safety barrier before deleting tasks and binaries; the legacy kill switch and user data are retained.
+The installer records replacement phases in a journal beside the installation directory. A later setup run repairs an interrupted replacement before staging another payload: uncommitted replacements restore the previous installation, while a committed replacement keeps the new installation and retries backup cleanup.
+
+To remove winsomnia, run `Winsomnia.Setup.exe uninstall` from a freshly extracted release package outside `%LOCALAPPDATA%\Programs\winsomnia`. The installed copy cannot safely delete its own running executable and therefore refuses self-uninstall. Uninstall applies the same safety barrier before deleting tasks and binaries; the legacy kill switch and user data are retained.

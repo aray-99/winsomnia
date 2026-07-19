@@ -7,6 +7,18 @@ namespace Winsomnia.Setup;
 
 public sealed class WindowsSetupPlatform : ISetupPlatform
 {
+    private readonly IUpgradeFileSystem upgradeFiles;
+    private readonly TimeSpan verificationTimeout;
+    private readonly Action<TimeSpan> delay;
+
+    public WindowsSetupPlatform(IUpgradeFileSystem? upgradeFiles = null, TimeSpan? verificationTimeout = null,
+        Action<TimeSpan>? delay = null)
+    {
+        this.upgradeFiles = upgradeFiles ?? new UpgradeFileSystem();
+        this.verificationTimeout = verificationTimeout ?? TimeSpan.FromSeconds(5);
+        this.delay = delay ?? Thread.Sleep;
+    }
+
     public IDisposable AcquireSetupLease() => new NamedMutexLease(@"Local\winsomnia.setup.v3");
 
     public void EnsureLegacyKillSwitch(string path)
@@ -24,18 +36,17 @@ public sealed class WindowsSetupPlatform : ISetupPlatform
         dynamic? task = FindTask(taskName);
         if (task is null) return;
         task.Enabled = false;
-        if ((bool)task.Enabled)
-            throw new InvalidOperationException($"Scheduled task '{taskName}' remained enabled.");
+        WaitForTask(taskName, snapshot => !snapshot.Enabled, "disabled");
     }
 
     public void EndTask(string taskName)
     {
         dynamic? task = FindTask(taskName);
         if (task is null) return;
-        if ((int)task.State == 4) task.Stop(0); // TASK_STATE_RUNNING
-        task = FindTask(taskName);
-        if (task is not null && (int)task.State == 4)
-            throw new InvalidOperationException($"Scheduled task '{taskName}' remained running.");
+        if (TaskStateDecision.MustStop((int)task.State)) task.Stop(0);
+        WaitForTask(taskName,
+            snapshot => TaskStateDecision.IsSafelyDisabled(snapshot.Enabled, snapshot.State),
+            "disabled and stopped");
     }
 
     public void DeleteTask(string taskName)
@@ -43,48 +54,27 @@ public sealed class WindowsSetupPlatform : ISetupPlatform
         if (FindTask(taskName) is null) return;
         dynamic folder = GetTaskFolder();
         folder.DeleteTask(taskName, 0);
-        if (FindTask(taskName) is not null)
-            throw new InvalidOperationException($"Scheduled task '{taskName}' was not deleted.");
+        WaitForTask(taskName, _ => false, "absent");
     }
 
     public bool IsTaskDisabledOrMissing(string taskName)
     {
-        dynamic? task = FindTask(taskName);
-        return task is null || !(bool)task.Enabled;
+        var snapshot = ReadTaskSnapshot(taskName);
+        return snapshot is null || TaskStateDecision.IsSafelyDisabled(snapshot.Enabled, snapshot.State);
     }
 
     public void AssertNoRuntimeProcesses(string installedRoot)
     {
-        var matches = new List<string>();
-        foreach (var process in Process.GetProcessesByName("Winsomnia.Engine"))
+        var deadline = DateTime.UtcNow + verificationTimeout;
+        while (true)
         {
-            using (process) matches.Add($"Winsomnia.Engine ({process.Id})");
+            var matches = FindInstalledRuntimeProcesses(installedRoot);
+            if (matches.Count == 0) return;
+            if (DateTime.UtcNow >= deadline)
+                throw new InvalidOperationException("Installed winsomnia runtime is still running: " +
+                    string.Join(", ", matches));
+            delay(TimeSpan.FromMilliseconds(100));
         }
-
-        try
-        {
-            var locatorType = Type.GetTypeFromProgID("WbemScripting.SWbemLocator")
-                ?? throw new InvalidOperationException("Windows process inspection is unavailable.");
-            {
-                dynamic locator = Activator.CreateInstance(locatorType)!;
-                dynamic service = locator.ConnectServer(".", @"root\cimv2");
-                dynamic processes = service.ExecQuery(
-                    "SELECT ProcessId, Name, CommandLine FROM Win32_Process WHERE Name='powershell.exe' OR Name='pwsh.exe'");
-                foreach (dynamic process in processes)
-                {
-                    string? commandLine = process.CommandLine as string;
-                    if (commandLine?.Contains("winsomnia-monitor.ps1", StringComparison.OrdinalIgnoreCase) == true)
-                        matches.Add($"{process.Name} ({process.ProcessId}) running winsomnia-monitor.ps1");
-                }
-            }
-        }
-        catch (COMException exception)
-        {
-            throw new InvalidOperationException("Could not verify legacy monitor processes.", exception);
-        }
-
-        if (matches.Count > 0)
-            throw new InvalidOperationException("Installed winsomnia runtime is still running: " + string.Join(", ", matches));
     }
 
     public void DisarmEngine(SetupPaths paths)
@@ -109,62 +99,74 @@ public sealed class WindowsSetupPlatform : ISetupPlatform
         var state = manager.LoadOrCreate(paths.LegacyStatePath, paths.LegacyConfigPath);
         if (state.Armed || state.ActivationId is not null)
             throw new InvalidOperationException("Engine state is not disarmed.");
-        if (File.Exists(paths.MarkerPath) || Directory.Exists(paths.MarkerPath))
-            throw new InvalidOperationException("The v3 lock marker is still present.");
         var authorization = new LockMarkerStore(paths.MarkerPath).Inspect(state, realLockEnabled: true);
         if (authorization.State != LockAuthorizationStates.Disarmed)
             throw new InvalidOperationException("Engine lock authorization is not disarmed.");
+        if (File.Exists(paths.MarkerPath) || Directory.Exists(paths.MarkerPath))
+            throw new InvalidOperationException("The non-authorizing v3 lock marker could not be made absent.");
     }
+
+    public void RecoverInstallation(string targetPath) =>
+        new DurableInstallationRecovery(upgradeFiles).Recover(targetPath);
 
     public string StageAndValidatePayload(SetupPaths paths)
     {
         if (!Directory.Exists(paths.Source))
             throw new DirectoryNotFoundException($"Installer payload was not found: {paths.Source}");
-        var parent = Path.GetDirectoryName(Path.GetFullPath(paths.Target))
-            ?? throw new InvalidDataException("The installation path has no parent.");
-        Directory.CreateDirectory(parent);
-        var stage = Path.Combine(parent, $".winsomnia-stage-{Guid.NewGuid():N}");
+        var locations = UpgradeLocations.ForTarget(paths.Target);
+        upgradeFiles.CreateDirectory(Path.GetDirectoryName(locations.Target)!);
+        if (upgradeFiles.DirectoryExists(locations.Stage))
+            throw new InvalidOperationException("Upgrade staging cleanup has not completed.");
         try
         {
-            CopyDirectorySafe(paths.Source, stage);
-            File.Copy(paths.SetupExecutable, Path.Combine(stage, "Winsomnia.Setup.exe"), true);
-            ValidatePayload(stage);
-            return stage;
+            CopyDirectorySafe(paths.Source, locations.Stage);
+            File.Copy(paths.SetupExecutable, Path.Combine(locations.Stage, "Winsomnia.Setup.exe"), true);
+            PayloadValidator.Validate(locations.Stage);
+            return locations.Stage;
         }
-        catch
+        catch (Exception primary)
         {
-            if (Directory.Exists(stage)) Directory.Delete(stage, true);
+            try
+            {
+                if (upgradeFiles.DirectoryExists(locations.Stage)) upgradeFiles.DeleteDirectory(locations.Stage);
+            }
+            catch (Exception cleanup)
+            {
+                throw new AggregateException("Payload staging and cleanup both failed.", primary, cleanup);
+            }
             throw;
         }
     }
 
     public IInstallationSwap ReplaceInstallation(string stagedPath, string targetPath) =>
-        new AtomicDirectorySwap(stagedPath, targetPath);
+        new DurableInstallationSwap(upgradeFiles, stagedPath, targetPath);
 
     public void RegisterDisabledTask(ScheduledTaskPlan plan)
     {
+        if (plan.Enabled) throw new InvalidOperationException("Setup refuses to register an enabled task.");
         dynamic service = CreateTaskService();
         dynamic folder = service.GetFolder("\\");
         dynamic definition = service.NewTask(0);
         definition.RegistrationInfo.Description = plan.Description;
         definition.Principal.UserId = plan.UserId;
-        definition.Principal.LogonType = 3; // TASK_LOGON_INTERACTIVE_TOKEN
-        definition.Principal.RunLevel = 0; // TASK_RUNLEVEL_LUA
+        definition.Principal.LogonType = 3;
+        definition.Principal.RunLevel = 0;
         definition.Settings.Enabled = false;
         definition.Settings.DisallowStartIfOnBatteries = !plan.AllowStartOnBattery;
         definition.Settings.StopIfGoingOnBatteries = plan.StopOnBattery;
         definition.Settings.ExecutionTimeLimit = "PT0S";
-        definition.Settings.MultipleInstances = 2; // TASK_INSTANCES_IGNORE_NEW
+        definition.Settings.MultipleInstances = 2;
         definition.Settings.RestartCount = plan.RestartCount;
         definition.Settings.RestartInterval = "PT1M";
-        dynamic trigger = definition.Triggers.Create(9); // TASK_TRIGGER_LOGON
+        dynamic trigger = definition.Triggers.Create(9);
         trigger.UserId = plan.UserId;
-        dynamic action = definition.Actions.Create(0); // TASK_ACTION_EXEC
+        dynamic action = definition.Actions.Create(0);
         action.Path = plan.EnginePath;
         action.Arguments = "--enable-lock";
         folder.RegisterTaskDefinition(plan.TaskName, definition, 6, null, null, 3, null);
-        if (!IsTaskDisabledOrMissing(plan.TaskName) || FindTask(plan.TaskName) is null)
-            throw new InvalidOperationException("The installed task was not registered disabled.");
+        WaitForTask(plan.TaskName,
+            snapshot => TaskStateDecision.IsSafelyDisabled(snapshot.Enabled, snapshot.State),
+            "registered disabled and stopped", requirePresent: true);
     }
 
     public void CreateShortcut(string path, string target, string arguments)
@@ -185,6 +187,13 @@ public sealed class WindowsSetupPlatform : ISetupPlatform
         if (File.Exists(path)) File.Delete(path);
     }
 
+    public void AssertExternalSetup(string setupExecutable, string targetPath)
+    {
+        if (SetupPathPolicy.IsInsideTarget(setupExecutable, targetPath))
+            throw new InvalidOperationException(
+                "Uninstall must be run from an extracted release package outside the installation directory.");
+    }
+
     public void DeleteInstallation(string targetPath)
     {
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -192,7 +201,67 @@ public sealed class WindowsSetupPlatform : ISetupPlatform
         var fullTarget = Path.GetFullPath(targetPath);
         if (!fullTarget.StartsWith(programsRoot, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Refusing to remove an unexpected installation path.");
-        if (Directory.Exists(fullTarget)) Directory.Delete(fullTarget, true);
+        if (Directory.Exists(fullTarget)) new UpgradeFileSystem().DeleteDirectory(fullTarget);
+    }
+
+    private void WaitForTask(string taskName, Func<TaskSnapshot, bool> predicate, string expected,
+        bool requirePresent = false)
+    {
+        var deadline = DateTime.UtcNow + verificationTimeout;
+        while (true)
+        {
+            var snapshot = ReadTaskSnapshot(taskName);
+            if (snapshot is null ? !requirePresent : predicate(snapshot)) return;
+            if (DateTime.UtcNow >= deadline)
+                throw new TaskControlUnverifiedException(taskName, expected);
+            delay(TimeSpan.FromMilliseconds(100));
+        }
+    }
+
+    private static TaskSnapshot? ReadTaskSnapshot(string taskName)
+    {
+        dynamic? task = FindTask(taskName);
+        return task is null ? null : new TaskSnapshot((bool)task.Enabled, (int)task.State);
+    }
+
+    private static IReadOnlyList<string> FindInstalledRuntimeProcesses(string installedRoot)
+    {
+        var matches = new List<string>();
+        foreach (var process in Process.GetProcessesByName("Winsomnia.Engine"))
+        {
+            using (process)
+            {
+                string? path;
+                try { path = process.MainModule?.FileName; }
+                catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
+                {
+                    throw new InvalidOperationException("Could not verify a Winsomnia.Engine process path.", exception);
+                }
+                if (RuntimeProcessDecision.IsInstalledRuntime(process.ProcessName, path, null, installedRoot))
+                    matches.Add($"Winsomnia.Engine ({process.Id})");
+            }
+        }
+
+        try
+        {
+            var locatorType = Type.GetTypeFromProgID("WbemScripting.SWbemLocator")
+                ?? throw new InvalidOperationException("Windows process inspection is unavailable.");
+            dynamic locator = Activator.CreateInstance(locatorType)!;
+            dynamic service = locator.ConnectServer(".", @"root\cimv2");
+            dynamic processes = service.ExecQuery(
+                "SELECT ProcessId, Name, ExecutablePath, CommandLine FROM Win32_Process WHERE Name='powershell.exe' OR Name='pwsh.exe'");
+            foreach (dynamic process in processes)
+            {
+                if (RuntimeProcessDecision.IsInstalledRuntime((string)process.Name,
+                        process.ExecutablePath as string, process.CommandLine as string, installedRoot))
+                    matches.Add($"{process.Name} ({process.ProcessId}) running the installed monitor");
+            }
+        }
+        catch (COMException exception)
+        {
+            throw new InvalidOperationException("Could not verify legacy monitor processes.", exception);
+        }
+        return matches;
     }
 
     private static dynamic CreateTaskService()
@@ -209,24 +278,12 @@ public sealed class WindowsSetupPlatform : ISetupPlatform
     private static dynamic? FindTask(string taskName)
     {
         dynamic folder = GetTaskFolder();
-        dynamic tasks = folder.GetTasks(1); // include hidden tasks
+        dynamic tasks = folder.GetTasks(1);
         foreach (dynamic task in tasks)
         {
             if (((string)task.Name).Equals(taskName, StringComparison.OrdinalIgnoreCase)) return task;
         }
         return null;
-    }
-
-    private static void ValidatePayload(string root)
-    {
-        foreach (var file in new[] { "Winsomnia.Engine.exe", "Winsomnia.Desktop.exe", "Winsomnia.Setup.exe", "VERSION" })
-        {
-            var path = Path.Combine(root, file);
-            if (!File.Exists(path) || new FileInfo(path).Length == 0)
-                throw new InvalidDataException($"Installer payload is missing or empty: {file}");
-        }
-        var version = File.ReadAllText(Path.Combine(root, "VERSION")).Trim();
-        if (string.IsNullOrWhiteSpace(version)) throw new InvalidDataException("Installer VERSION is empty.");
     }
 
     private static void CopyDirectorySafe(string source, string destination)
@@ -249,6 +306,8 @@ public sealed class WindowsSetupPlatform : ISetupPlatform
         }
     }
 }
+
+public sealed record TaskSnapshot(bool Enabled, int State);
 
 internal sealed class NamedMutexLease : IDisposable
 {
@@ -275,51 +334,5 @@ internal sealed class NamedMutexLease : IDisposable
             owns = false;
         }
         mutex.Dispose();
-    }
-}
-
-internal sealed class AtomicDirectorySwap : IInstallationSwap
-{
-    private readonly string target;
-    private readonly string? backup;
-    private bool committed;
-    private bool disposed;
-
-    public AtomicDirectorySwap(string stagedPath, string targetPath)
-    {
-        target = Path.GetFullPath(targetPath);
-        var stage = Path.GetFullPath(stagedPath);
-        if (!Directory.Exists(stage)) throw new DirectoryNotFoundException("The staged installation is missing.");
-        if (!string.Equals(Path.GetDirectoryName(stage), Path.GetDirectoryName(target), StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("The staged payload must be beside the installation target.");
-        backup = Directory.Exists(target)
-            ? Path.Combine(Path.GetDirectoryName(target)!, $".winsomnia-backup-{Guid.NewGuid():N}")
-            : null;
-        if (backup is not null) Directory.Move(target, backup);
-        try { Directory.Move(stage, target); }
-        catch
-        {
-            if (backup is not null && Directory.Exists(backup) && !Directory.Exists(target))
-                Directory.Move(backup, target);
-            throw;
-        }
-    }
-
-    public void Commit()
-    {
-        if (disposed) throw new ObjectDisposedException(nameof(AtomicDirectorySwap));
-        if (backup is not null && Directory.Exists(backup)) Directory.Delete(backup, true);
-        committed = true;
-    }
-
-    public void Dispose()
-    {
-        if (disposed) return;
-        if (!committed)
-        {
-            if (Directory.Exists(target)) Directory.Delete(target, true);
-            if (backup is not null && Directory.Exists(backup)) Directory.Move(backup, target);
-        }
-        disposed = true;
     }
 }

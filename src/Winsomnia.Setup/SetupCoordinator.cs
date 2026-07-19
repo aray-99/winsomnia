@@ -41,11 +41,13 @@ public interface ISetupPlatform
     void AssertNoRuntimeProcesses(string installedRoot);
     void DisarmEngine(SetupPaths paths);
     void AssertEngineDisarmed(SetupPaths paths);
+    void RecoverInstallation(string targetPath);
     string StageAndValidatePayload(SetupPaths paths);
     IInstallationSwap ReplaceInstallation(string stagedPath, string targetPath);
     void RegisterDisabledTask(ScheduledTaskPlan plan);
     void CreateShortcut(string path, string target, string arguments);
     void DeleteShortcut(string path);
+    void AssertExternalSetup(string setupExecutable, string targetPath);
     void DeleteInstallation(string targetPath);
 }
 
@@ -61,14 +63,12 @@ public sealed class SetupCoordinator(ISetupPlatform platform, SetupPaths paths)
     public void Install()
     {
         using var lease = platform.AcquireSetupLease();
-        string? staged = null;
         IInstallationSwap? swap = null;
         try
         {
             EstablishSafetyBarrier();
-            staged = platform.StageAndValidatePayload(paths);
+            var staged = platform.StageAndValidatePayload(paths);
             swap = platform.ReplaceInstallation(staged, paths.Target);
-            staged = null;
 
             var engine = Path.Combine(paths.Target, "Winsomnia.Engine.exe");
             platform.RegisterDisabledTask(SetupTaskPlan.Define("winsomnia", engine,
@@ -90,18 +90,13 @@ public sealed class SetupCoordinator(ISetupPlatform platform, SetupPaths paths)
             }
             catch (Exception barrier)
             {
-                throw new AggregateException("Setup failed and the safety barrier could not be fully verified.",
-                    primary, barrier);
+                throw new AggregateException("Setup failed and safety could not be fully verified.", primary, barrier);
             }
-            throw new InvalidOperationException($"Setup stopped at a safe barrier: {primary.Message}", primary);
+            throw new InvalidOperationException($"Setup stopped at a verified safety barrier: {primary.Message}", primary);
         }
         finally
         {
-            swap?.Dispose();
-            if (staged is not null && Directory.Exists(staged))
-            {
-                try { Directory.Delete(staged, true); } catch { }
-            }
+            try { swap?.Dispose(); } catch { }
         }
     }
 
@@ -111,6 +106,7 @@ public sealed class SetupCoordinator(ISetupPlatform platform, SetupPaths paths)
         try
         {
             EstablishSafetyBarrier();
+            platform.AssertExternalSetup(paths.SetupExecutable, paths.Target);
             foreach (var taskName in TaskNames) platform.DeleteTask(taskName);
             platform.DeleteShortcut(paths.StartMenuShortcut);
             platform.DeleteShortcut(paths.StartupShortcut);
@@ -124,10 +120,9 @@ public sealed class SetupCoordinator(ISetupPlatform platform, SetupPaths paths)
             }
             catch (Exception barrier)
             {
-                throw new AggregateException("Uninstall failed and the safety barrier could not be fully verified.",
-                    primary, barrier);
+                throw new AggregateException("Uninstall failed and safety could not be fully verified.", primary, barrier);
             }
-            throw new InvalidOperationException($"Uninstall stopped at a safe barrier: {primary.Message}", primary);
+            throw new InvalidOperationException($"Uninstall stopped at a verified safety barrier: {primary.Message}", primary);
         }
     }
 
@@ -144,8 +139,10 @@ public sealed class SetupCoordinator(ISetupPlatform platform, SetupPaths paths)
             Try(() =>
             {
                 if (!platform.IsTaskDisabledOrMissing(taskName))
-                    throw new InvalidOperationException($"Scheduled task '{taskName}' is not disabled.");
+                    throw new TaskControlUnverifiedException(taskName);
             }, failures);
+        if (failures.Count == 0)
+            Try(() => platform.RecoverInstallation(paths.Target), failures);
         if (failures.Count > 0)
             throw new AggregateException("The safety barrier was not fully established.", failures);
     }
@@ -158,7 +155,7 @@ public sealed class SetupCoordinator(ISetupPlatform platform, SetupPaths paths)
         foreach (var taskName in TaskNames)
         {
             if (!platform.IsTaskDisabledOrMissing(taskName))
-                throw new InvalidOperationException($"Scheduled task '{taskName}' is not disabled.");
+                throw new TaskControlUnverifiedException(taskName);
         }
     }
 
@@ -168,6 +165,9 @@ public sealed class SetupCoordinator(ISetupPlatform platform, SetupPaths paths)
         catch (Exception exception) { failures.Add(exception); }
     }
 }
+
+public sealed class TaskControlUnverifiedException(string taskName, string? expected = null)
+    : InvalidOperationException($"Scheduled task '{taskName}' could not be proven {expected ?? "disabled and stopped"}.");
 
 public sealed record ScheduledTaskPlan(string TaskName, string EnginePath, string UserId, string Description,
     bool AllowStartOnBattery, bool StopOnBattery, int RestartCount, bool Enabled);
