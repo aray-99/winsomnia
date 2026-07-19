@@ -73,9 +73,7 @@ Test-Path -LiteralPath 'C:\temp\winsomnia-lock-enabled.json'
         $script:Emergency | Should -Match ([regex]::Escape("Stop-ScheduledTask -TaskName 'winsomnia' -ErrorAction SilentlyContinue"))
         $script:Emergency | Should -Match ([regex]::Escape("Disable-ScheduledTask -TaskName 'winsomnia'"))
         $script:Emergency | Should -Match ([regex]::Escape("Get-ScheduledTask -TaskName 'winsomnia' | Select-Object TaskName, State"))
-        $script:Emergency | Should -Match ([regex]::Escape("Stop-ScheduledTask -TaskName 'win-somnia' -ErrorAction SilentlyContinue"))
-        $script:Emergency | Should -Match ([regex]::Escape("Disable-ScheduledTask -TaskName 'win-somnia'"))
-        $script:Emergency | Should -Match ([regex]::Escape("Get-ScheduledTask -TaskName 'win-somnia' | Select-Object TaskName, State"))
+        $script:Emergency | Should -Match '(?s)### v0\.2\.x.*?\$taskNames = @\(''winsomnia'',''win-somnia''\).*?### バージョンが分からない'
     }
 
     It 'documents durable v0.3 disarm before process shutdown and containment fallback' {
@@ -84,6 +82,9 @@ Test-Path -LiteralPath 'C:\temp\winsomnia-lock-enabled.json'
         $script:Emergency | Should -Match 'Desktop または IPC が利用できない場合は、marker 削除とタスク停止・無効化までを緊急 containment'
         $script:Emergency | Should -Match 'Setup の safety barrier'
         $script:Emergency | Should -Match '内部 Engine CLI は復旧手順として公開・使用しません'
+        $script:Emergency | Should -Match ([regex]::Escape("Where-Object ProcessName -EQ 'Winsomnia.Engine'"))
+        $script:Emergency | Should -Match 'Desktop tray は残る設計です'
+        $script:Emergency | Should -Match 'tray の終了はロック安全性の必須条件ではありません'
     }
 
     It 'reports unknown-version task and process outcomes explicitly' {
