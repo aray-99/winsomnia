@@ -81,3 +81,18 @@ engine and protocol live here. Before the focus application consumes them, the
 engine, protocol contract, and client conformance tests can move to a dedicated
 repository without moving either product UI.
 
+
+## Distribution and legacy cutover
+
+v0.3 has one public package and one lock owner. `build-release.ps1` publishes
+`Winsomnia.Setup.exe` beside an `app` payload containing Desktop and Engine.
+The legacy PowerShell monitor, setup/config runtime, and management CLI are not
+shipped and cannot call the lock API.
+
+Setup retains a narrowly scoped upgrade shim for old installations. Before
+replacement it creates and verifies the legacy kill switch, disables and ends
+both historical task names, and detects Engine or `winsomnia-monitor.ps1`
+processes associated with the installed root. That compatibility code is a
+safety barrier only; it is not a second supported runtime or public CLI. Legacy
+configuration is read only as a migration source and authorization always starts
+disarmed.

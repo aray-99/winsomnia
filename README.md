@@ -1,131 +1,48 @@
 # winsomnia
 
-Windowsの夜更かしを防ぐため、決めた時間帯に画面ロックを繰り返すPowerShellツールです。
-
-既定では毎日 **23:00〜06:00** に動作します。ログオン中は非表示で待機し、制限時間中にサインインしても約5秒後に再ロックします。
+winsomnia は、決めた時間帯に Windows のワークステーションを繰り返しロックし、夜更かしを防ぐデスクトップアプリです。既定の制限時間は毎日 **23:00〜06:00** です。
 
 > [!IMPORTANT]
 > ロックが止まらない場合は、スマートフォンなど別端末から [緊急復旧手順](docs/EMERGENCY.md) を開いてください。
 
-## まず使う
+## インストール
 
-Windows PowerShellでリポジトリを開きます。
+GitHub Release の `winsomnia-<version>-desktop.zip` を展開し、フォルダー直下の `Winsomnia.Setup.exe` を実行します。`app` フォルダーは Setup と同じ場所に保ってください。
 
-~~~powershell
-cd <winsomniaを展開またはcloneしたフォルダー>
-~~~
+Setup はユーザーごとのインストールを行い、タスクを無効、Engine を disarm の安全停止状態にして終了します。スタートメニューから winsomnia を開き、予定を確認して Diagnostics の安全テストを実行してから有効化してください。詳しくは [インストールガイド](docs/INSTALL.md) を参照してください。
 
-初回設定または設定変更：
+## 操作
 
-~~~powershell
-.\winsomnia.ps1 setup
-~~~
+設定画面では、現在の状態確認、24時間後に反映する予定変更、例外日の予約、安全テスト、有効化、一時停止を行えます。通知領域アイコンは状態表示専用です。
 
-現在の状態を確認：
-
-~~~powershell
-.\winsomnia.ps1 status
-~~~
-
-実運用を開始：
-
-~~~powershell
-.\winsomnia.ps1 resume
-~~~
-
-引数なしで起動すると、同じ操作を選べる対話メニューを表示します。
-
-~~~powershell
-.\winsomnia.ps1
-~~~
-
-## Windowsアプリ（v0.2）
-
-v0.2では、スタートメニューから開く設定画面と、状態確認専用の通知領域アイコンを追加します。設定変更は24時間後に反映され、制限中の即時解除には有限の一時解除クレジットを使用します。トレイから設定変更や停止はできません。
-
-ロック処理はUIから独立したEngineへ移し、将来のFocus Appは[IPC v1](docs/IPC.md)を通じて期限付き休憩セッションを利用できます。設計詳細は[アーキテクチャ](docs/ARCHITECTURE.md)を参照してください。
-
-正式版のWindowsアプリはGitHub Releaseの`winsomnia-<version>-desktop.zip`から導入します。ZIPを展開したフォルダー構成を保ったまま、同梱の`Winsomnia.Setup.exe`を実行してください。詳しい手順は[インストールガイド](docs/INSTALL.md)を参照してください。
-
-## 日常操作
-
-| 目的 | コマンド |
-| --- | --- |
-| 状態を見る | `.\winsomnia.ps1 status` |
-| 一時停止する | `.\winsomnia.ps1 pause` |
-| 再開する | `.\winsomnia.ps1 resume` |
-| ロックなしで試す | `.\winsomnia.ps1 test` |
-| 最新ログを見る | `.\winsomnia.ps1 logs` |
-| アンインストール | `.\winsomnia.ps1 uninstall` |
-
-設定変更の例：
-
-~~~powershell
-.\winsomnia.ps1 setup `
-  -StartTime '23:30' `
-  -EndTime '06:30' `
-  -IntervalSeconds 10
-~~~
+v0.3 では `Winsomnia.Engine` がロック状態と Windows のロック API を単独で所有します。旧 PowerShell monitor、setup、config runtime、管理 CLI は廃止しました。旧版からの更新時だけ、Setup が旧タスクと monitor を検出して安全停止し、設定を disarm 状態へ移行します。
 
 ## 安全装置
 
-winsomniaは実際にユーザーをロックするため、停止手段を複数用意しています。
+- 実ロックには Engine の `--enable-lock`、schema-v3 の `Armed=true`、固定の肯定的 enable marker がすべて必要です。
+- marker の欠落、破損、ID 不一致、読み取り失敗はロックを拒否します。
+- 一時停止は Engine を永続的に disarm し、marker を失効させます。
+- Setup、更新、アンインストールはタスクを停止・無効化し、Engine が disarm であることを検証します。
+- 自動試験は fake locker を使い、Windows のロック API を呼びません。
 
-- `test`は実際にロックせず、短時間で自動終了します。
-- 実ロックはモニターへ`-EnableLock`を明示した場合だけ有効です。
-- キルスイッチが存在すると、ロックせず通常1秒以内に終了します。
-- 開始時刻と終了時刻が同じ設定は、24時間ロックを避けるため拒否します。
-- タスクの重複起動を防ぎ、異常終了時は最大3回再起動します。
+固定 marker:
 
-既定のキルスイッチ：
+```text
+C:\temp\winsomnia-lock-enabled.json
+```
 
-~~~text
-C:\temp\win-somnia-unlock.txt
-~~~
-
-キルスイッチ名は旧バージョンと緊急手順の互換性を保つため、ハイフン付きのまま維持しています。
-
-通常はファイルを直接操作せず、次を使ってください。
-
-~~~powershell
-.\winsomnia.ps1 pause
-.\winsomnia.ps1 resume
-~~~
-
-## Windowsラップトップでの動作
-
-- セットアップを実行したユーザーのログオン時に非表示で起動します。
-- 制限時間外もバックグラウンドで時刻を監視します。
-- 再起動後は、ログオンすると自動的に監視を再開します。
-- スリープ中は処理が止まり、復帰後に時刻判定を再開します。
-- バッテリー駆動へ切り替わっても停止しません。
-- キルスイッチがある状態でログオンすると、モニターは安全に終了します。
-
-## 保存場所
-
-| 内容 | 既定の場所 |
-| --- | --- |
-| 設定 | `%LOCALAPPDATA%\winsomnia\config.json` |
-| ログ | `%LOCALAPPDATA%\winsomnia\winsomnia.log` |
-| 緊急停止 | `C:\temp\win-somnia-unlock.txt` |
-| タスク名 | `winsomnia` |
-
-設定ファイルには制限時刻、再ロック間隔、キルスイッチ、ログ保存先を記録します。不正な時刻や相対パスを検出した場合は、ロックせずエラー終了します。
+状態ファイルは `%LOCALAPPDATA%\winsomnia\state-v3.json`、インストール先は `%LOCALAPPDATA%\Programs\winsomnia`、タスク名は `winsomnia` です。設計詳細は [アーキテクチャ](docs/ARCHITECTURE.md)、IPC 契約は [IPC v2](docs/IPC.md) を参照してください。
 
 ## 開発とリリース
 
-~~~powershell
-# 静的解析
+```powershell
 Invoke-ScriptAnalyzer -Path . -Recurse -Severity Warning,Error
-
-# テスト
-Invoke-Pester -Path .\tests -Output Detailed
-
-# ZIPとSHA-256を生成
+Invoke-Pester -Path .\tests -CI -Output Detailed
+.\scripts\Test-RepositoryPolicy.ps1
 .\build-release.ps1
-~~~
+```
 
-開発規約は [CONTRIBUTING.md](CONTRIBUTING.md)、詳しいリリース工程は [RELEASE.md](RELEASE.md)、変更履歴は [CHANGELOG.md](CHANGELOG.md) を参照してください。
+`build-release.ps1` は Desktop、Engine、Setup を含む単一 ZIP と SHA-256 を `dist` に生成します。開発規約は [CONTRIBUTING.md](CONTRIBUTING.md)、リリース工程は [RELEASE.md](RELEASE.md)、変更履歴は [CHANGELOG.md](CHANGELOG.md) を参照してください。
 
 ## ライセンス
 

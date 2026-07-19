@@ -2,40 +2,42 @@
 
 ## Windows desktop release
 
-Use the `winsomnia-<version>-desktop.zip` asset from the GitHub Release. The desktop package contains the WPF application, engine, and per-user installer.
+GitHub Release の `winsomnia-<version>-desktop.zip` を使用します。この単一パッケージに WPF Desktop、Engine、ユーザー単位 Setup が含まれます。旧 PowerShell script package は v0.3 で廃止されています。
 
-1. Extract the ZIP to a normal user-writable folder. Keep the extracted `winsomnia-<version>-desktop` folder intact; `Winsomnia.Setup.exe` must stay beside its `app` folder.
-2. Run `Winsomnia.Setup.exe` from that extracted folder.
-3. Open winsomnia from the Start menu and review the schedule.
-4. Run `winsomnia.ps1 test -TestDurationSeconds 60` from the script package, or use the diagnostics flow in the desktop app, before resuming.
-5. Resume only after reviewing the schedule and confirming that the emergency kill switch is available.
+1. ZIP を通常ユーザーが書き込めるフォルダーへ展開します。
+2. 展開された `winsomnia-<version>-desktop` フォルダーの構成を保ち、`Winsomnia.Setup.exe` を実行します。
+3. スタートメニューから winsomnia を開き、制限予定を確認します。
+4. Diagnostics の安全テストを実行します。このテストはロックしません。
+5. 内容を確認した上で `Activate / 有効化` を選びます。
 
-The installer registers a per-user logon task and leaves winsomnia paused. It does not remove the kill switch or start real locking. Use the normal pause and resume controls after the bounded safety test.
+Setup は `app` フォルダーから Desktop と Engine を検証・配置し、タスクを無効、Engine を disarm、enable marker を欠落させた状態で終了します。Setup 自体が実ロックやタスク開始を行うことはありません。
 
 ## Verify the installation
 
-The installed files are under `%LOCALAPPDATA%\Programs\winsomnia`. The installed `VERSION` file must match the release version. The task is named `winsomnia` and the default emergency kill switch is:
-
-```text
-C:\temp\win-somnia-unlock.txt
-```
-
-Check the state before resuming:
+インストール先は `%LOCALAPPDATA%\Programs\winsomnia` です。`VERSION` が Release と一致し、タスク `winsomnia` が無効で、enable marker が存在しないことを有効化前に確認できます。
 
 ```powershell
 Get-Content "$env:LOCALAPPDATA\Programs\winsomnia\VERSION"
 Get-ScheduledTask -TaskName winsomnia | Select-Object TaskName, State
-Test-Path C:\temp\win-somnia-unlock.txt
+Test-Path -LiteralPath C:\temp\winsomnia-lock-enabled.json
 ```
 
-If installation fails, leave the kill switch in place and keep the task disabled. See [EMERGENCY.md](EMERGENCY.md) for recovery steps.
+最後の結果は安全停止中なら `False` です。失敗時はタスクを有効化せず、[EMERGENCY.md](EMERGENCY.md) を参照してください。
 
-## Updating or uninstalling
+## Updating
 
-Pause winsomnia before replacing an existing installation. Extract the new desktop package to a new folder and run its `Winsomnia.Setup.exe`. The v0.3 installer creates and verifies the legacy kill switch, disables and stops both legacy task names, verifies that no Engine or legacy monitor remains, and migrates only settings into a disarmed v3 state. It stages and validates the complete payload before replacing the installed directory and registers the new task disabled. The v2 state file remains unchanged as a read-only migration source.
+既存の winsomnia を Desktop の `Pause / 一時停止` で停止してから、新しい ZIP を別フォルダーへ展開して `Winsomnia.Setup.exe` を実行します。
 
-If any step fails, setup returns a nonzero exit code after repeating the safety barrier. Do not resume until the legacy kill switch exists, `C:\temp\winsomnia-lock-enabled.json` is absent, Engine state is disarmed, and the `winsomnia` task is disabled.
+v0.3 Setup は更新前に旧互換 kill switch を作成・検証し、`winsomnia` と `win-somnia` の両タスクを停止・無効化し、Engine と旧 monitor が残っていないことを検証します。その後、旧設定だけを disarm の schema-v3 state へ移行します。旧 state/config は移行元として読み取り専用で残り、旧 PowerShell runtime は新パッケージへ含まれません。
 
-The installer records replacement phases in a journal beside the installation directory. A later setup run repairs an interrupted replacement before staging another payload: uncommitted replacements restore the previous installation, while a committed replacement keeps the new installation and retries backup cleanup.
+配置は完全な payload の staging と検証後に行われます。中断された置換は journal から復旧され、失敗時は安全 barrier を再確立して非ゼロで終了します。復旧確認は、旧互換 kill switch が存在し、enable marker が存在せず、Engine が disarm、両タスクが無効または欠落であることです。
 
-To remove winsomnia, run `Winsomnia.Setup.exe uninstall` from a freshly extracted release package outside `%LOCALAPPDATA%\Programs\winsomnia`. The installed copy cannot safely delete its own running executable and therefore refuses self-uninstall. Uninstall applies the same safety barrier before deleting tasks and binaries; the legacy kill switch and user data are retained.
+## Uninstalling
+
+インストール先の外に展開した新しい Release package から次を実行します。
+
+```powershell
+.\Winsomnia.Setup.exe uninstall
+```
+
+インストール済み Setup は実行中の自分自身を安全に削除できないため self-uninstall を拒否します。Uninstall は同じ safety barrier を適用してからタスク、shortcut、binary を削除し、旧互換 kill switch とユーザーデータは保持します。

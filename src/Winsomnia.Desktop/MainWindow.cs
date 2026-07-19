@@ -15,6 +15,8 @@ public sealed class MainWindow : Window
 {
     private readonly EngineClient client;
     private readonly TextBlock statusText = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 16) };
+    private readonly TextBlock operationText = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 16) };
+    private readonly TextBlock diagnosticsText = new() { Name = "PauseResult", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 0) };
     private readonly TextBox start = new() { Width = 120 };
     private readonly TextBox end = new() { Width = 120 };
     private readonly ComboBox strength = new() { Width = 260 };
@@ -38,7 +40,7 @@ public sealed class MainWindow : Window
     {
         var tabs = new TabControl { Margin = new Thickness(20) };
         tabs.Items.Add(Tab(Localization.Text("Home"), Panel(
-            Heading(Localization.Text("Status")), statusText,
+            Heading(Localization.Text("Status")), statusText, operationText,
             Button(Localization.Text("Refresh"), async () => await RefreshAsync()))));
 
         strength.Items.Add(Localization.Text("Strict"));
@@ -63,13 +65,15 @@ public sealed class MainWindow : Window
             Heading(Localization.Text("Diagnostics")),
             new TextBlock
             {
-                Text = "Kill switch / 緊急停止: C:\\temp\\win-somnia-unlock.txt\n" +
+                Text = "Enable marker / 有効化マーカー: C:\\temp\\winsomnia-lock-enabled.json\n" +
                        "Emergency guide / 緊急手順: docs/EMERGENCY.md\n" +
                        "IPC: named pipe, current user only",
                 TextWrapping = TextWrapping.Wrap
             },
             Button("Run safe test / 安全テスト", async () => await RunSafeTestAsync()),
-            Button("Activate / 有効化", async () => await ActivateAsync()))));
+            Button("Activate / 有効化", async () => await ActivateAsync()),
+            Button("Pause / 一時停止", async () => await PauseAsync()),
+            diagnosticsText)));
 
         return tabs;
     }
@@ -81,12 +85,7 @@ public sealed class MainWindow : Window
             status = await client.GetStatusAsync();
             start.Text = status.Settings.StartTime;
             end.Text = status.Settings.EndTime;
-            statusText.Text =
-                $"{Localization.Text("Status")}: {status.Phase}\n" +
-                $"{Localization.Text("Credit")}: {status.CreditMinutes} min\n" +
-                $"Next / 次回: {status.NextTransitionUtc?.ToLocalTime():g}\n" +
-                $"{Localization.Text("Pending")}: {status.PendingSettingsApplyAtUtc?.ToLocalTime():g}\n" +
-                (string.IsNullOrWhiteSpace(status.Error) ? string.Empty : $"Error: {status.Error}");
+            statusText.Text = StatusPresentation.Render(status);
         }
         catch
         {
@@ -137,8 +136,8 @@ public sealed class MainWindow : Window
     private async Task ActivateAsync()
     {
         var answer = MessageBox.Show(
-            "This removes the kill switch and enables real locking with the current schedule. Continue?\n" +
-            "キルスイッチを削除し、現在の予定で実ロックを有効にします。続行しますか？",
+            "This creates the affirmative lock marker and enables real locking with the current schedule. Continue?\n" +
+            "有効化マーカーを作成し、現在の予定で実ロックを有効にします。続行しますか？",
             Title, MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
         if (answer != MessageBoxResult.Yes) return;
         try
@@ -152,6 +151,23 @@ public sealed class MainWindow : Window
         }
     }
 
+    private async Task PauseAsync()
+    {
+        try
+        {
+            status = await client.PauseAsync();
+            var display = StatusPresentation.AfterPause(status);
+            statusText.Text = display.StatusText;
+            operationText.Text = display.ConfirmationText;
+            diagnosticsText.Text = display.DiagnosticsText;
+        }
+        catch (Exception exception)
+        {
+            operationText.Text = $"{Localization.Text("PauseFailed")}: {exception.Message}";
+            diagnosticsText.Text = operationText.Text;
+            MessageBox.Show(operationText.Text, Title, MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
     private async Task ReserveExceptionAsync()
     {
         if (exceptionDate.SelectedDate is null) return;

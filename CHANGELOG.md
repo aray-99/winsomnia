@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Public distribution is consolidated into one Desktop/Engine/Setup ZIP and SHA-256 produced by `build-release.ps1`.
+- Installation, update, rollback, architecture, workflow, and artifact tests now describe `Winsomnia.Engine` as the sole lock API owner.
+- Desktop diagnostics includes the normal pause action after removal of the public management CLI.
+
+### Removed
+
+- The legacy PowerShell lock monitor, setup/config runtime, general management CLI, script ZIP, and duplicate desktop build entry point.
+
 ## [0.2.2] - 2026-07-18
 
 ### Fixed
