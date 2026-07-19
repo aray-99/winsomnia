@@ -26,3 +26,15 @@
 - [ ] Manual verification not run is listed below
 
 <!-- Do not claim that log output alone proves the Windows lock screen was displayed. -->
+
+## GUI release manual safety evidence
+
+<!-- Required only for release/* -> main PRs. Link a CLOSED Issue in this repository with the manual-test label; keep the evidence in that Issue. -->
+
+Completed manual-test Issue: <!-- https://github.com/OWNER/REPOSITORY/issues/123 or #123 -->
+
+- [ ] Notification warning was verified once for each of two restriction transitions.
+- [ ] Deleting the enable marker stopped locking, including after restart.
+- [ ] Alternate-account recovery was demonstrated or recorded as unavailable/conditional.
+- [ ] WinRE/Safe Mode recovery was demonstrated or recorded as unavailable/conditional.
+- [ ] The final state was safe: marker absent, Engine disarmed/paused, and task disabled.
