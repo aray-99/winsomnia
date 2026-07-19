@@ -70,7 +70,29 @@ Test-Path -LiteralPath 'C:\temp\winsomnia-lock-enabled.json'
         $script:Emergency | Should -Match '### v0\.3'
         $script:Emergency | Should -Match '### v0\.2\.x'
         $script:Emergency | Should -Match "New-Item -ItemType File -LiteralPath 'C:\\temp\\win-somnia-unlock\.txt' -Force"
-        $script:Emergency | Should -Match "Get-ScheduledTask -TaskName 'winsomnia','win-somnia'"
+        $script:Emergency | Should -Match ([regex]::Escape("Stop-ScheduledTask -TaskName 'winsomnia' -ErrorAction SilentlyContinue"))
+        $script:Emergency | Should -Match ([regex]::Escape("Disable-ScheduledTask -TaskName 'winsomnia'"))
+        $script:Emergency | Should -Match ([regex]::Escape("Get-ScheduledTask -TaskName 'winsomnia' | Select-Object TaskName, State"))
+        $script:Emergency | Should -Match ([regex]::Escape("Stop-ScheduledTask -TaskName 'win-somnia' -ErrorAction SilentlyContinue"))
+        $script:Emergency | Should -Match ([regex]::Escape("Disable-ScheduledTask -TaskName 'win-somnia'"))
+        $script:Emergency | Should -Match ([regex]::Escape("Get-ScheduledTask -TaskName 'win-somnia' | Select-Object TaskName, State"))
+    }
+
+    It 'documents durable v0.3 disarm before process shutdown and containment fallback' {
+        $script:Emergency | Should -Match 'marker が `False` で Engine がまだ動作している間に、Desktop の `Pause / 一時停止`'
+        $script:Emergency | Should -Match '`Armed: No`、認可状態が `Disarmed`'
+        $script:Emergency | Should -Match 'Desktop または IPC が利用できない場合は、marker 削除とタスク停止・無効化までを緊急 containment'
+        $script:Emergency | Should -Match 'Setup の safety barrier'
+        $script:Emergency | Should -Match '内部 Engine CLI は復旧手順として公開・使用しません'
+    }
+
+    It 'reports unknown-version task and process outcomes explicitly' {
+        $script:Emergency | Should -Match ([regex]::Escape('$taskNames = @(''winsomnia'',''win-somnia'')'))
+        $script:Emergency | Should -Match "State = 'MISSING'"
+        $script:Emergency | Should -Match ([regex]::Escape('$task | Stop-ScheduledTask'))
+        $script:Emergency | Should -Match ([regex]::Escape('$task | Disable-ScheduledTask | Out-Null'))
+        $script:Emergency | Should -Match 'V03Processes'
+        $script:Emergency | Should -Match 'LegacyProcesses'
     }
 
     It 'keeps the exact WinRE marker absence check and volume discovery' {
