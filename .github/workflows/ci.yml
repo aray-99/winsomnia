@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  issues: read
 
 jobs:
   powershell:
@@ -57,13 +58,46 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          REPOSITORY_FULL_NAME: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          $evidenceParameters = @{}
+          if ($env:EVENT_NAME -eq 'pull_request' -and
+              $env:BASE_REF -eq 'main' -and
+              $env:HEAD_REF -match '^release/[^/]+$') {
+              $issueNumber = .\scripts\Test-RepositoryPolicy.ps1 `
+                  -EventName $env:EVENT_NAME `
+                  -BaseRef $env:BASE_REF `
+                  -HeadRef $env:HEAD_REF `
+                  -PullRequestBody $env:PR_BODY `
+                  -RepositoryFullName $env:REPOSITORY_FULL_NAME `
+                  -GetManualEvidenceIssueNumber
+              $issueNumber = [int]$issueNumber
+
+              $issueJson = gh issue view $issueNumber `
+                  --repo $env:REPOSITORY_FULL_NAME `
+                  --json number,state,labels
+              if ($LASTEXITCODE -ne 0) {
+                  throw "The referenced manual-test Issue #$issueNumber could not be loaded."
+              }
+              $issue = $issueJson | ConvertFrom-Json
+              $evidenceParameters = @{
+                  ManualEvidenceIssueNumber = [int]$issue.number
+                  ManualEvidenceIssueState  = [string]$issue.state
+                  ManualEvidenceIssueLabels = @($issue.labels | ForEach-Object { [string]$_.name })
+              }
+          }
+
           .\scripts\Test-RepositoryPolicy.ps1 `
             -EventName $env:EVENT_NAME `
             -BaseRef $env:BASE_REF `
             -HeadRef $env:HEAD_REF `
             -BaseSha $env:BASE_SHA `
-            -HeadSha $env:HEAD_SHA
+            -HeadSha $env:HEAD_SHA `
+            -PullRequestBody $env:PR_BODY `
+            -RepositoryFullName $env:REPOSITORY_FULL_NAME `
+            @evidenceParameters
 
       - name: Run tests
         shell: powershell
