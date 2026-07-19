@@ -128,6 +128,36 @@ Describe 'GUI release manual evidence repository policy' {
         } | Should -Throw -ExpectedMessage '*must check the GUI safety evidence item*'
     }
 
+    It 'rejects evidence hidden entirely in an HTML comment' {
+        $parameters = Get-ValidPolicyContext
+        $body = "<!--`n$(Get-GuiEvidenceBody)`n-->"
+
+        {
+            & $script:PolicyPath @parameters -PullRequestBody $body
+        } | Should -Throw -ExpectedMessage '*must reference a manual-test Issue in this repository*'
+    }
+
+    It 'rejects a hidden Issue reference with visible checklist items' {
+        $parameters = Get-ValidPolicyContext
+        $body = (Get-GuiEvidenceBody) -replace '(?m)^Completed manual-test Issue:.*$', 'Completed manual-test Issue: <!-- #123 -->'
+
+        {
+            & $script:PolicyPath @parameters -PullRequestBody $body
+        } | Should -Throw -ExpectedMessage '*must reference a manual-test Issue in this repository*'
+    }
+
+    It 'does not count hidden checked items mixed with a visible unchecked checklist' {
+        $parameters = Get-ValidPolicyContext
+        $hiddenChecklist = @('<!--')
+        $hiddenChecklist += $script:RequiredScenarios | ForEach-Object { "- [x] $_" }
+        $hiddenChecklist += '-->'
+        $body = Get-GuiEvidenceBody -Checked $false -ExtraText ($hiddenChecklist -join "`n")
+
+        {
+            & $script:PolicyPath @parameters -PullRequestBody $body
+        } | Should -Throw -ExpectedMessage '*must check the GUI safety evidence item*'
+    }
+
     It 'accepts complete CRLF evidence from a closed labeled Issue' {
         $parameters = Get-ValidPolicyContext
         $body = (Get-GuiEvidenceBody).Replace("`n", "`r`n")

@@ -140,6 +140,29 @@ function ConvertTo-MarkdownWithoutFencedCodeBlock {
     return $visibleLines -join "`n"
 }
 
+function ConvertTo-MarkdownWithoutHtmlComment {
+    param(
+        [Parameter()]
+        [AllowEmptyString()]
+        [string]$Markdown
+    )
+
+    $normalizedMarkdown = ConvertTo-NormalizedMarkdown -Markdown $Markdown
+    $withoutClosedComments = [regex]::Replace($normalizedMarkdown, '(?s)<!--.*?-->', '')
+    return [regex]::Replace($withoutClosedComments, '(?s)<!--.*$', '')
+}
+
+function ConvertTo-VisibleMarkdown {
+    param(
+        [Parameter()]
+        [AllowEmptyString()]
+        [string]$Markdown
+    )
+
+    $withoutHtmlComments = ConvertTo-MarkdownWithoutHtmlComment -Markdown $Markdown
+    return ConvertTo-MarkdownWithoutFencedCodeBlock -Markdown $withoutHtmlComments
+}
+
 function Get-ManualEvidenceIssueNumberFromBody {
     if ([string]::IsNullOrWhiteSpace($policyContext.PullRequestBody)) {
         throw 'A release PR to main requires completed GUI manual safety evidence in the PR body.'
@@ -148,7 +171,7 @@ function Get-ManualEvidenceIssueNumberFromBody {
         throw 'GUI release evidence validation requires the trusted repository full name.'
     }
 
-    $normalizedBody = ConvertTo-MarkdownWithoutFencedCodeBlock -Markdown $policyContext.PullRequestBody
+    $normalizedBody = ConvertTo-VisibleMarkdown -Markdown $policyContext.PullRequestBody
     $escapedRepository = [regex]::Escape($policyContext.RepositoryFullName)
     $issueReferencePattern = '(?im)^[ \t]*Completed manual-test Issue:[ \t]*(?:' +
         "https://github\.com/$escapedRepository/issues/(?<urlNumber>[1-9][0-9]*)|#(?<shortNumber>[1-9][0-9]*))[ \t]*$"
@@ -190,7 +213,7 @@ function Assert-GuiReleaseEvidence {
         throw "The referenced Issue must have the 'manual-test' label."
     }
 
-    $bodyWithoutFencedCode = ConvertTo-MarkdownWithoutFencedCodeBlock -Markdown $policyContext.PullRequestBody
+    $visibleBody = ConvertTo-VisibleMarkdown -Markdown $policyContext.PullRequestBody
     $requiredScenarios = @(
         'Notification warning was verified once for each of two restriction transitions.'
         'Deleting the enable marker stopped locking, including after restart.'
@@ -201,7 +224,7 @@ function Assert-GuiReleaseEvidence {
 
     foreach ($scenario in $requiredScenarios) {
         $escapedScenario = [regex]::Escape($scenario)
-        if ($bodyWithoutFencedCode -notmatch "(?im)^[ \t]*-[ \t]*\[x\][ \t]*$escapedScenario[ \t]*$") {
+        if ($visibleBody -notmatch "(?im)^[ \t]*-[ \t]*\[x\][ \t]*$escapedScenario[ \t]*$") {
             throw "A release PR to main must check the GUI safety evidence item: '$scenario'"
         }
     }
