@@ -8,5 +8,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Winsomnia.Setup\Winsomnia.Setup.csproj" />
+    <ProjectReference Include="..\..\src\Winsomnia.Desktop\Winsomnia.Desktop.csproj" />
   </ItemGroup>
 </Project>
