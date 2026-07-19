@@ -31,7 +31,7 @@ try {
     )
     foreach ($project in $projects) {
         $publish = Join-Path $output $project.Name
-        $arguments = @('publish', (Join-Path $PSScriptRoot $project.Path), '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '-p:PublishSingleFile=true', '-p:DebugType=None', '-o', $publish)
+        $arguments = @('publish', (Join-Path $PSScriptRoot $project.Path), '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '-p:PublishSingleFile=true', '-p:DebugType=None', "-p:Version=$Version", '-o', $publish)
         & dotnet @arguments
         if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed for $($project.Path)." }
         Copy-Item -Path (Join-Path $publish '*') -Destination $app -Recurse -Force
@@ -42,7 +42,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\INSTALL.md') -Destination $app
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'VERSION') -Destination $app
 
-    $setupArguments = @('publish', (Join-Path $PSScriptRoot 'src\Winsomnia.Setup\Winsomnia.Setup.csproj'), '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '-p:PublishSingleFile=true', '-p:DebugType=None', '-o', $staging)
+    $setupArguments = @('publish', (Join-Path $PSScriptRoot 'src\Winsomnia.Setup\Winsomnia.Setup.csproj'), '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '-p:PublishSingleFile=true', '-p:DebugType=None', "-p:Version=$Version", '-o', $staging)
     & dotnet @setupArguments
     if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed for the installer.' }
 
