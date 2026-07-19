@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Winsomnia.Core;
 using Winsomnia.Engine;
@@ -8,8 +9,12 @@ var tests = new (string Name, Func<Task> Run)[]
     ("offline activation and pause order safely", TestOfflineTransitionsAsync),
     ("IPC activation and pause expose authorization", TestIpcTransitionsAsync),
     ("activation and pause failures latch denial", TestTransitionFailuresAsync),
+    ("activation has no fallible post-commit save", TestNoPostCommitSaveAsync),
+    ("concurrent clients serialize state transitions", TestConcurrentClientsAsync),
+    ("monitor uses fixed monotonic cadence", TestMonitorCadenceAsync),
     ("immediate pre-lock marker check denies", TestImmediatePreLockCheckAsync),
-    ("single engine mutex rejects a second host", TestSingleEngineAsync)
+    ("single engine mutex rejects a second host", TestSingleEngineAsync),
+    ("offline CLI rejects a live Engine", TestOfflineCliLeaseAsync)
 };
 var failed = 0;
 foreach (var test in tests)
@@ -70,6 +75,14 @@ static Task TestOfflineTransitionsAsync()
     var paused = fixture.Manager.LoadOrCreate();
     Assert(!paused.Armed && paused.ActivationId is null && !File.Exists(fixture.MarkerPath),
         "Offline pause did not revoke marker and clear state.");
+
+    OfflineSafety.Activate(fixture.Manager, fixture.Store);
+    var failingRevoke = new FailingMarkerStore(fixture.Store) { FailRevoke = true };
+    AssertThrows(() => OfflineSafety.Pause(fixture.Manager, failingRevoke),
+        "Offline marker revoke failure was accepted.");
+    paused = fixture.Manager.LoadOrCreate();
+    Assert(!paused.Armed && paused.ActivationId is null,
+        "Offline revoke failure did not durably disarm state.");
     return Task.CompletedTask;
 }
 
@@ -129,8 +142,70 @@ static async Task TestTransitionFailuresAsync()
         Assert(clientRun.Locker.Requests == requestsBeforePause, "Pause failure reached locker after denial latch.");
     }
     finally { await clientRun.DisposeAsync(); }
+
+    var durable = fixture.Manager.LoadOrCreate();
+    Assert(!durable.Armed && durable.ActivationId is null && File.Exists(fixture.MarkerPath),
+        "Marker revoke failure did not durably disarm state.");
+    var restartedLocker = new CountingLocker();
+    await RunBrieflyAsync(fixture, restartedLocker, fixture.Store, true);
+    Assert(restartedLocker.Requests == 0, "Restart reauthorized a marker after pause failure.");
 }
 
+static async Task TestNoPostCommitSaveAsync()
+{
+    using var fixture = new Fixture();
+    using var store = new PostCommitStateLockMarkerStore(fixture.Store, fixture.Manager.StatePath);
+    var run = await StartHostAsync(fixture, store, false);
+    try
+    {
+        var status = await run.Client.ActivateAsync();
+        Assert(status.Armed, "Activation failed after its marker commit.");
+        AssertState(fixture.Store.Inspect(fixture.Manager.LoadOrCreate(), true),
+            LockAuthorizationStates.Armed, "marker-validated");
+    }
+    finally { await run.DisposeAsync(); }
+}
+
+static async Task TestConcurrentClientsAsync()
+{
+    using var fixture = new Fixture();
+    var run = await StartHostAsync(fixture, fixture.Store, false);
+    try
+    {
+        var activations = await Task.WhenAll(Enumerable.Range(0, 8)
+            .Select(_ => run.Client.ActivateAsync()));
+        Assert(activations.All(status => status.Armed), "A serialized activation failed.");
+        AssertState(fixture.Store.Inspect(fixture.Manager.LoadOrCreate(), true),
+            LockAuthorizationStates.Armed, "marker-validated");
+        var pauses = await Task.WhenAll(Enumerable.Range(0, 8)
+            .Select(_ => run.Client.PauseAsync()));
+        Assert(pauses.All(status => status.Paused && !status.Armed), "A serialized pause failed.");
+        var state = fixture.Manager.LoadOrCreate();
+        Assert(!state.Armed && state.ActivationId is null && !File.Exists(fixture.MarkerPath),
+            "Concurrent clients left inconsistent authorization.");
+    }
+    finally { await run.DisposeAsync(); }
+}
+
+static async Task TestMonitorCadenceAsync()
+{
+    using var fixture = new Fixture();
+    var id = Guid.NewGuid().ToString("N");
+    fixture.Manager.Save(fixture.ArmedState(id));
+    var store = new SlowRecordingMarkerStore();
+    using var stop = new CancellationTokenSource();
+    await using var host = new EngineHost(fixture.Manager, fixture.Clock, new CountingLocker(), true,
+        pipeName: $"winsomnia.engine.test.{Guid.NewGuid():N}", markerStore: store,
+        mutexName: $"Local\\winsomnia.engine.test.{Guid.NewGuid():N}");
+    var running = host.RunAsync(stop.Token);
+    await Task.Delay(3200);
+    await StopAsync(stop, running);
+    var inspections = store.Inspections;
+    Assert(inspections.Count >= 4, "Monitor did not run enough cadence checks.");
+    var steadyGaps = inspections.Zip(inspections.Skip(1), Stopwatch.GetElapsedTime).Skip(1).ToList();
+    Assert(steadyGaps.All(gap => gap <= TimeSpan.FromMilliseconds(1150)),
+        $"Monitor cadence included a work-plus-delay gap: {steadyGaps.Max()}.");
+}
 static async Task TestImmediatePreLockCheckAsync()
 {
     using var fixture = new Fixture();
@@ -158,6 +233,35 @@ static async Task TestSingleEngineAsync()
     await StopAsync(firstStop, firstRun);
 }
 
+static async Task TestOfflineCliLeaseAsync()
+{
+    using var fixture = new Fixture();
+    var statePath = Path.Combine(fixture.Directory, "offline-state-v3.json");
+    using var stop = new CancellationTokenSource();
+    await using var host = new EngineHost(fixture.Manager, fixture.Clock, new CountingLocker(), false,
+        pipeName: $"winsomnia.engine.test.{Guid.NewGuid():N}", markerStore: fixture.Store,
+        mutexName: EngineHost.GetMutexName());
+    var running = host.RunAsync(stop.Token);
+    try
+    {
+        await Task.Delay(150);
+        var start = new ProcessStartInfo("dotnet")
+        {
+            UseShellExecute = false,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true
+        };
+        start.ArgumentList.Add(typeof(EngineHost).Assembly.Location);
+        start.ArgumentList.Add("--pause-state");
+        start.ArgumentList.Add("--state");
+        start.ArgumentList.Add(statePath);
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("Engine process did not start.");
+        await process.WaitForExitAsync();
+        Assert(process.ExitCode != 0, "Offline CLI mutated state while a live Engine owned the lease.");
+        Assert(!File.Exists(statePath), "Rejected offline CLI created state before acquiring the lease.");
+    }
+    finally { await StopAsync(stop, running); }
+}
 static async Task RunBrieflyAsync(Fixture fixture, CountingLocker locker, ILockMarkerStore store, bool enabled)
 {
     using var stop = new CancellationTokenSource();
@@ -192,6 +296,11 @@ static void AssertState(LockAuthorization actual, string state, string reason) =
     Assert(actual.State == state && actual.Reason == reason,
         $"Expected {state}/{reason}, got {actual.State}/{actual.Reason}.");
 static void Assert(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
+static void AssertThrows(Action action, string message)
+{
+    try { action(); } catch { return; }
+    throw new InvalidOperationException(message);
+}
 static async Task AssertThrowsAsync(Func<Task> action, string message)
 {
     try { await action(); } catch { return; }
@@ -259,7 +368,35 @@ sealed class SequencedMarkerStore : ILockMarkerStore
     public void Commit(string id) { }
     public void Revoke() { }
 }
-sealed class HostRun(EngineHost host, CancellationTokenSource stop, Task run, EngineClient client, CountingLocker locker) : IAsyncDisposable
+sealed class PostCommitStateLockMarkerStore(ILockMarkerStore inner, string statePath) : ILockMarkerStore, IDisposable
+{
+    private FileStream? stateLock;
+    public LockAuthorization Inspect(PersistentState state, bool enabled) => inner.Inspect(state, enabled);
+    public void Commit(string id)
+    {
+        inner.Commit(id);
+        stateLock = File.Open(statePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+    }
+    public void Revoke() => inner.Revoke();
+    public void Dispose() => stateLock?.Dispose();
+}
+sealed class SlowRecordingMarkerStore : ILockMarkerStore
+{
+    private readonly object sync = new();
+    private readonly List<long> inspections = [];
+    public IReadOnlyList<long> Inspections
+    {
+        get { lock (sync) return inspections.ToList(); }
+    }
+    public LockAuthorization Inspect(PersistentState state, bool enabled)
+    {
+        lock (sync) inspections.Add(Stopwatch.GetTimestamp());
+        Thread.Sleep(300);
+        return new(LockAuthorizationStates.Armed, "marker-validated");
+    }
+    public void Commit(string id) { }
+    public void Revoke() { }
+}sealed class HostRun(EngineHost host, CancellationTokenSource stop, Task run, EngineClient client, CountingLocker locker) : IAsyncDisposable
 {
     public EngineClient Client { get; } = client;
     public CountingLocker Locker { get; } = locker;

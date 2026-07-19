@@ -23,12 +23,14 @@ var manager = new StateManager(statePath, clock);
 var markerStore = new LockMarkerStore();
 if (args.Contains("--pause-state", StringComparer.OrdinalIgnoreCase))
 {
+    using var lease = new EngineInstanceLease(EngineHost.GetMutexName());
     OfflineSafety.Pause(manager, markerStore, legacyStatePath, legacyConfigPath);
     Console.WriteLine("winsomnia engine state is disarmed and the lock marker is absent.");
     return 0;
 }
 if (args.Contains("--activate-state", StringComparer.OrdinalIgnoreCase))
 {
+    using var lease = new EngineInstanceLease(EngineHost.GetMutexName());
     OfflineSafety.Activate(manager, markerStore, legacyStatePath, legacyConfigPath);
     Console.WriteLine("winsomnia engine state and lock marker are armed.");
     return 0;

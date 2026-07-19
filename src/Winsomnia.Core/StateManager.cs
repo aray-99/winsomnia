@@ -39,9 +39,17 @@ public sealed class StateManager(string statePath, ISystemClock clock)
         Validate(state);
         var parent = Path.GetDirectoryName(StatePath)!;
         Directory.CreateDirectory(parent);
-        var temporary = StatePath + ".tmp";
-        File.WriteAllText(temporary, JsonSerializer.Serialize(state, JsonOptions));
-        File.Move(temporary, StatePath, true);
+        var temporary = Path.Combine(parent,
+            $".{Path.GetFileName(StatePath)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            File.WriteAllText(temporary, JsonSerializer.Serialize(state, JsonOptions));
+            File.Move(temporary, StatePath, true);
+        }
+        finally
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+        }
     }
 
     public PersistentState Normalize(PersistentState state)

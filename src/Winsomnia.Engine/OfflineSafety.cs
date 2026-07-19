@@ -8,8 +8,8 @@ public static class OfflineSafety
         string? legacyStatePath = null, string? legacyConfigPath = null)
     {
         var state = manager.LoadOrCreate(legacyStatePath, legacyConfigPath);
-        markerStore.Revoke();
         manager.Save(state with { Armed = false, ActivationId = null });
+        markerStore.Revoke();
     }
 
     public static void Activate(StateManager manager, ILockMarkerStore markerStore,

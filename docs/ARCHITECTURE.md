@@ -21,9 +21,13 @@ winsomnia UI, schedule, unlock credits, or persisted settings.
   deny locking and expose a `Disarmed` or `Faulted` reason through IPC.
 - The engine validates the marker at least once per second and again immediately
   before the injected lock helper. Activation commits armed state first and the
-  marker last; pause revokes the marker first and latches denial on failure.
-- One per-user named mutex permits only one Engine. State transitions and lock
-  decisions are serialized within that process.
+  marker last; pause latches denial, durably disarms state, and then revokes the
+  marker so deletion failure remains restart-safe. The immediate check is a
+  conservative TOCTOU reduction, not a claim that hostile local filesystem races
+  are fully eliminated.
+- One per-user named mutex permits only one Engine, including offline state
+  commands. A FIFO gate serializes client transitions and monitor decisions.
+  Monitor checks use a monotonic one-second cadence rather than work plus delay.
 - Session cancellation is scoped by an unguessable cancellation token. One
   client cannot cancel another session by knowing only its public identifier.
 - Automated tests inject a fake locker. They never pass `--enable-lock` to a

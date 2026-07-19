@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.IO.Pipes;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 using Winsomnia.Core;
 
 namespace Winsomnia.Engine;
@@ -21,7 +23,7 @@ public sealed class EngineHost : IAsyncDisposable
     private readonly bool realLockEnabled;
     private readonly string pipeName;
     private readonly string mutexName;
-    private readonly SemaphoreSlim stateGate = new(1, 1);
+    private readonly Channel<byte> stateGate = CreateStateGate();
     private readonly CancellationTokenSource stop = new();
     private PersistentState state;
     private DateTimeOffset nextLockUtc = DateTimeOffset.MinValue;
@@ -59,17 +61,38 @@ public sealed class EngineHost : IAsyncDisposable
         await Task.WhenAll(MonitorAsync(linked.Token), AcceptClientsAsync(linked.Token));
     }
 
+    private static Channel<byte> CreateStateGate()
+    {
+        var channel = Channel.CreateBounded<byte>(new BoundedChannelOptions(1)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
+            SingleReader = false,
+            SingleWriter = false,
+            AllowSynchronousContinuations = true
+        });
+        if (!channel.Writer.TryWrite(0)) throw new InvalidOperationException("State gate initialization failed.");
+        return channel;
+    }
+
+    private ValueTask<byte> EnterStateGateAsync(CancellationToken cancellationToken) =>
+        stateGate.Reader.ReadAsync(cancellationToken);
+
+    private void ExitStateGate()
+    {
+        if (!stateGate.Writer.TryWrite(0)) throw new InvalidOperationException("State gate release failed.");
+    }
     private LockAuthorization InspectAuthorization() => authorizationDenialLatched
         ? new(LockAuthorizationStates.Faulted, "runtime-denial-latched")
         : markerStore.Inspect(state, realLockEnabled);
 
     private async Task MonitorAsync(CancellationToken cancellationToken)
     {
+        var nextCheck = Stopwatch.GetTimestamp();
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
-                await stateGate.WaitAsync(cancellationToken);
+                await EnterStateGateAsync(cancellationToken);
                 try
                 {
                     state = stateManager.Normalize(state);
@@ -98,7 +121,7 @@ public sealed class EngineHost : IAsyncDisposable
                     stateManager.Save(state);
                     lastError = authorization.State == LockAuthorizationStates.Faulted ? authorization.Reason : null;
                 }
-                finally { stateGate.Release(); }
+                finally { ExitStateGate(); }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
             catch (Exception exception)
@@ -108,7 +131,17 @@ public sealed class EngineHost : IAsyncDisposable
                 lastError = exception.Message;
                 AppendLog($"Engine monitor paused after error: {exception.Message}", "ERROR");
             }
-            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+            nextCheck += Stopwatch.Frequency;
+            var remainingTicks = nextCheck - Stopwatch.GetTimestamp();
+            if (remainingTicks > 0)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(
+                    (double)remainingTicks / Stopwatch.Frequency), cancellationToken);
+            }
+            else
+            {
+                nextCheck = Stopwatch.GetTimestamp();
+            }
         }
     }
 
@@ -154,7 +187,7 @@ public sealed class EngineHost : IAsyncDisposable
 
     private async Task<ApiResponse> ExecuteAsync(ApiRequest request, CancellationToken cancellationToken)
     {
-        await stateGate.WaitAsync(cancellationToken);
+        await EnterStateGateAsync(cancellationToken);
         try
         {
             state = stateManager.Normalize(state);
@@ -208,15 +241,19 @@ public sealed class EngineHost : IAsyncDisposable
                     if (InspectAuthorization().State == LockAuthorizationStates.Armed)
                         throw new InvalidOperationException("Safe test requires locking to be disarmed.");
                     break;
-                case "activate": Activate(request); break;
-                case "pause": Pause(); break;
+                case "activate":
+                    Activate(request);
+                    return ApiResponse.Success(request.Id, CreateStatus());
+                case "pause":
+                    Pause();
+                    return ApiResponse.Success(request.Id, CreateStatus());
                 default: return ApiResponse.Failure(request.Id, "Unknown command.");
             }
             stateManager.Save(state);
             return ApiResponse.Success(request.Id, CreateStatus());
         }
         catch (Exception exception) { return ApiResponse.Failure(request.Id, exception.Message); }
-        finally { stateGate.Release(); }
+        finally { ExitStateGate(); }
     }
 
     private void Activate(ApiRequest request)
@@ -251,9 +288,17 @@ public sealed class EngineHost : IAsyncDisposable
     private void Pause()
     {
         authorizationDenialLatched = true;
-        markerStore.Revoke();
         state = state with { Armed = false, ActivationId = null };
-        stateManager.Save(state);
+        try
+        {
+            stateManager.Save(state);
+        }
+        catch
+        {
+            try { markerStore.Revoke(); } catch { }
+            throw;
+        }
+        markerStore.Revoke();
         authorizationDenialLatched = false;
         lastError = null;
     }
@@ -285,7 +330,6 @@ public sealed class EngineHost : IAsyncDisposable
     {
         stop.Cancel();
         stop.Dispose();
-        stateGate.Dispose();
         return ValueTask.CompletedTask;
     }
 }
