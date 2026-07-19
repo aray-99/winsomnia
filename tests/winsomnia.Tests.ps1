@@ -25,7 +25,7 @@ Describe 'winsomnia release package' {
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
         try {
-            $entryNames = @($archive.Entries | ForEach-Object FullName)
+            $entryNames = @($archive.Entries | ForEach-Object { $_.FullName -replace '\\', '/' })
             $prefix = "$packageName/"
             $entryNames | Should -Contain "${prefix}Winsomnia.Setup.exe"
             $entryNames | Should -Contain "${prefix}app/Winsomnia.Engine.exe"
@@ -41,7 +41,9 @@ Describe 'winsomnia release package' {
             $entryNames | Should -Not -Contain "${prefix}winsomnia-monitor.ps1"
             $entryNames | Should -Not -Contain "${prefix}winsomnia-setup.ps1"
 
-            $readmeEntry = $archive.GetEntry("${prefix}README.md")
+            $readmeEntry = $archive.Entries | Where-Object {
+                ($_.FullName -replace '\\', '/') -eq "${prefix}README.md"
+            } | Select-Object -First 1
             $reader = [IO.StreamReader]::new($readmeEntry.Open())
             try {
                 $readme = $reader.ReadToEnd()
