@@ -53,7 +53,6 @@ jobs:
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
           .\build-release.ps1 -Version $version
-          .\build-desktop.ps1 -Version $version
 
       - name: Publish GitHub Release
         shell: powershell

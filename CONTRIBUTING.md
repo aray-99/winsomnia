@@ -16,9 +16,9 @@ Do not commit directly to `main`, `develop`, or `release/*`. Commit messages mus
 ## Safety rules
 
 - Keep winsomnia paused during development.
-- Use `winsomnia.ps1 test` or `-DryRun` for ordinary validation.
+- Use the Desktop diagnostics safe test and injected fake lockers for ordinary validation.
 - Never run an actual lock test, remove the kill switch, enable the scheduled task, or reboot a workstation without explicit approval immediately before that action.
-- Any lock-path change needs tests for bounded dry-run, startup kill switch, kill switch during waiting, invalid configuration, and error handling.
+- Any lock-path change needs tests for marker denial at startup and immediately before locking, invalid state/configuration, concurrency, and error handling.
 - Review [the emergency recovery guide](docs/EMERGENCY.md) whenever recovery behavior changes.
 
 ## Privacy rules
