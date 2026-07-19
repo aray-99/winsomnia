@@ -47,6 +47,10 @@ var uiThread = new Thread(() =>
         var tabs = controls.OfType<TabItem>().ToList();
         Assert(tabs.Count == 4 && tabs.All(tab => tab.Content is ScrollViewer),
             "Every settings tab must remain scrollable at large text or scaling.");
+        var diagnosticsTab = tabs.Single(tab => Equals(tab.Header, DesktopLocalization.Text("Diagnostics")));
+        var diagnosticsControls = Descendants((DependencyObject)diagnosticsTab.Content).ToList();
+        Assert(diagnosticsControls.OfType<TextBlock>().Any(text => text.Name == "PauseResult"),
+            "Diagnostics does not contain a Pause-adjacent result region.");
     }
     catch (Exception exception) { uiFailure = exception; }
 });
@@ -131,9 +135,14 @@ Assert(pauseDisplay.StatusText.Contains("Authorization reason: Paused by the use
 Assert(pauseDisplay.ConfirmationText.Contains("paused", StringComparison.OrdinalIgnoreCase) &&
     pauseDisplay.ConfirmationText.Contains("disarmed", StringComparison.OrdinalIgnoreCase),
     "Pause success confirmation is not explicit.");
+Assert(pauseDisplay.DiagnosticsText.Contains(pauseDisplay.ConfirmationText, StringComparison.Ordinal) &&
+    pauseDisplay.DiagnosticsText.Contains("Lock authorization: Disarmed", StringComparison.Ordinal) &&
+    pauseDisplay.DiagnosticsText.Contains("Authorization reason: Paused by the user.", StringComparison.Ordinal),
+    "Diagnostics pause result omitted the localized confirmation or authorization summary.");
 var mainWindowSource = File.ReadAllText(Path.Combine(repository, "src", "Winsomnia.Desktop", "MainWindow.cs"));
 Assert(mainWindowSource.Contains("StatusPresentation.AfterPause(status)", StringComparison.Ordinal) &&
-    mainWindowSource.Contains("operationText.Text = display.ConfirmationText", StringComparison.Ordinal),
+    mainWindowSource.Contains("operationText.Text = display.ConfirmationText", StringComparison.Ordinal) &&
+    mainWindowSource.Contains("diagnosticsText.Text = display.DiagnosticsText", StringComparison.Ordinal),
     "MainWindow does not render the pause result and explicit confirmation.");
 Console.WriteLine("PASS localization, DPI, keyboard, system colors, scrolling, prompt, unlock, and close safety");
 return 0;

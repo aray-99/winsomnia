@@ -16,6 +16,7 @@ public sealed class MainWindow : Window
     private readonly EngineClient client;
     private readonly TextBlock statusText = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 16) };
     private readonly TextBlock operationText = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 16) };
+    private readonly TextBlock diagnosticsText = new() { Name = "PauseResult", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 0) };
     private readonly TextBox start = new() { Width = 120 };
     private readonly TextBox end = new() { Width = 120 };
     private readonly ComboBox strength = new() { Width = 260 };
@@ -71,7 +72,8 @@ public sealed class MainWindow : Window
             },
             Button("Run safe test / 安全テスト", async () => await RunSafeTestAsync()),
             Button("Activate / 有効化", async () => await ActivateAsync()),
-            Button("Pause / 一時停止", async () => await PauseAsync()))));
+            Button("Pause / 一時停止", async () => await PauseAsync()),
+            diagnosticsText)));
 
         return tabs;
     }
@@ -157,10 +159,12 @@ public sealed class MainWindow : Window
             var display = StatusPresentation.AfterPause(status);
             statusText.Text = display.StatusText;
             operationText.Text = display.ConfirmationText;
+            diagnosticsText.Text = display.DiagnosticsText;
         }
         catch (Exception exception)
         {
             operationText.Text = $"{Localization.Text("PauseFailed")}: {exception.Message}";
+            diagnosticsText.Text = operationText.Text;
             MessageBox.Show(operationText.Text, Title, MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }

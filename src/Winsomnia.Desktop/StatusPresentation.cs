@@ -3,7 +3,7 @@ using Winsomnia.Core;
 
 namespace Winsomnia.Desktop;
 
-public sealed record StatusDisplay(string StatusText, string ConfirmationText);
+public sealed record StatusDisplay(string StatusText, string ConfirmationText, string DiagnosticsText);
 
 public static class StatusPresentation
 {
@@ -25,8 +25,15 @@ public static class StatusPresentation
         return string.Join(Environment.NewLine, lines);
     }
 
-    public static StatusDisplay AfterPause(EngineStatus status, CultureInfo? culture = null) =>
-        new(Render(status, culture), Localization.Text("PauseSucceeded", culture));
+    public static StatusDisplay AfterPause(EngineStatus status, CultureInfo? culture = null)
+    {
+        culture ??= CultureInfo.CurrentUICulture;
+        var confirmation = Localization.Text("PauseSucceeded", culture);
+        var authorization = $"{Localization.Text("Authorization", culture)}: {status.LockAuthorization.State}";
+        var reason = $"{Localization.Text("Reason", culture)}: {status.LockAuthorization.Reason}";
+        return new(Render(status, culture), confirmation,
+            string.Join(Environment.NewLine, confirmation, authorization, reason));
+    }
 
     private static string YesNo(bool value, CultureInfo culture) =>
         Localization.Text(value ? "Yes" : "No", culture);
