@@ -132,23 +132,30 @@ static void TestPayloadStagingAndValidation()
     Directory.CreateDirectory(source);
     try
     {
-        var framework = "net10.0-windows10.0.22000.0";
-        var engine = Path.GetFullPath(Path.Combine("src", "Winsomnia.Engine", "bin", "Debug", framework,
-            "Winsomnia.Engine.exe"));
-        var desktop = Path.GetFullPath(Path.Combine("src", "Winsomnia.Desktop", "bin", "Debug", framework,
-            "Winsomnia.Desktop.exe"));
-        var setup = Path.GetFullPath(Path.Combine("src", "Winsomnia.Setup", "bin", "Debug", framework,
-            "Winsomnia.Setup.exe"));
+        var engine = Path.Combine(AppContext.BaseDirectory, "Winsomnia.Engine.exe");
+        var desktop = Path.Combine(AppContext.BaseDirectory, "Winsomnia.Desktop.exe");
+        var setup = Path.Combine(AppContext.BaseDirectory, "Winsomnia.Setup.exe");
+        var fixtureFileVersion = System.Diagnostics.FileVersionInfo.GetVersionInfo(setup).FileVersion
+            ?? throw new InvalidOperationException("Setup fixture version is missing.");
+        var fixtureVersion = Version.Parse(fixtureFileVersion);
+        var semanticVersion = $"{fixtureVersion.Major}.{fixtureVersion.Minor}.{fixtureVersion.Build}";
         File.Copy(engine, Path.Combine(source, "Winsomnia.Engine.exe"));
         File.Copy(desktop, Path.Combine(source, "Winsomnia.Desktop.exe"));
-        File.WriteAllText(Path.Combine(source, "VERSION"), "0.3.0");
+        File.WriteAllText(Path.Combine(source, "VERSION"), semanticVersion);
         var paths = Paths(root) with { Source = source, SetupExecutable = setup, Target = Path.Combine(root, "installed") };
         var platform = new WindowsSetupPlatform();
         var stage = platform.StageAndValidatePayload(paths);
         Assert(stage == UpgradeLocations.ForTarget(paths.Target).Stage, "Staging path is not deterministic.");
-        Assert(File.Exists(Path.Combine(stage, "Winsomnia.Setup.exe")) && File.Exists(Path.Combine(stage, "VERSION")),
-            "Validated staging omitted required payload files.");
         Directory.Delete(stage, true);
+
+        File.WriteAllText(Path.Combine(source, "VERSION"), "9.9.9");
+        AssertThrows(() => platform.StageAndValidatePayload(paths),
+            "Executable versions inconsistent with VERSION passed validation.");
+        Assert(!Directory.Exists(UpgradeLocations.ForTarget(paths.Target).Stage),
+            "Version mismatch left the staging directory behind.");
+        AssertThrows(() => PayloadValidator.ValidateExecutable(engine, "Winsomnia.Engine", new Version(9, 9, 9, 0)),
+            "Direct executable version mismatch passed validation.");
+        File.WriteAllText(Path.Combine(source, "VERSION"), semanticVersion);
 
         File.WriteAllText(Path.Combine(source, "Winsomnia.Engine.exe"), "not a PE image");
         AssertThrows(() => platform.StageAndValidatePayload(paths), "A text file passed executable validation.");
@@ -375,12 +382,23 @@ static void TestSafetyDecisionLogic()
     Assert(!RuntimeProcessDecision.IsInstalledRuntime("Winsomnia.Engine", Path.Combine(Path.GetTempPath(), "other", "Winsomnia.Engine.exe"), null, root),
         "Unrelated Engine path was treated as installed.");
     Assert(RuntimeProcessDecision.IsInstalledRuntime("powershell.exe", null,
-        $"powershell -File \"{Path.Combine(root, "winsomnia-monitor.ps1")}\"", root), "Exact monitor path was missed.");
+        $"powershell -File \"{Path.Combine(root, "winsomnia-monitor.ps1")}\"", root), "Installed monitor path was missed.");
+    var outside = Path.Combine(Path.GetTempPath(), "legacy-package", "winsomnia-monitor.ps1");
+    Assert(RuntimeProcessDecision.IsInstalledRuntime("PwSh.ExE", null, $"pwsh -NoProfile -File \"{outside}\" -EnableLock", root),
+        "Legacy monitor outside the installed root was missed.");
+    Assert(!RuntimeProcessDecision.IsInstalledRuntime("powershell.exe", null,
+        $"powershell -Command \"Write-Host {outside}\"", root), "A non-File mention was treated as a monitor process.");
+    Assert(!RuntimeProcessDecision.IsInstalledRuntime("powershell.exe", null,
+        $"powershell -File \"{outside}.bak\"", root), "A monitor backup filename was treated as live.");
+    Assert(!RuntimeProcessDecision.IsInstalledRuntime("powershell.exe", null,
+        $"powershell -File \"{Path.Combine(Path.GetDirectoryName(outside)!, "not-winsomnia-monitor.ps1")}\"", root),
+        "A prefixed script filename was treated as the monitor.");
+    Assert(!RuntimeProcessDecision.IsInstalledRuntime("cmd.exe", null, $"cmd -File \"{outside}\"", root),
+        "A non-PowerShell process was treated as the monitor.");
     Assert(SetupPathPolicy.IsInsideTarget(Path.Combine(root, "Winsomnia.Setup.exe"), root), "Installed setup path was not detected.");
     Assert(!SetupPathPolicy.IsInsideTarget(Path.Combine(Path.GetTempPath(), "package", "Winsomnia.Setup.exe"), root),
         "External setup path was rejected.");
 }
-
 static void TestMarkerDirectoryRemainsNonAuthorizing()
 {
     var root = Path.Combine(Path.GetTempPath(), $"winsomnia-marker-directory-{Guid.NewGuid():N}");
