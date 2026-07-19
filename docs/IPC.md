@@ -1,6 +1,6 @@
-# Lock-session IPC protocol v1
+# Lock-session IPC protocol v2
 
-The engine listens on `winsomnia.engine.v1.<user-sid-hash>` using a named pipe
+The engine listens on `winsomnia.engine.v2.<user-sid-hash>` using a named pipe
 created with current-user-only access. Each request and response is one UTF-8
 JSON object followed by a newline.
 
@@ -9,19 +9,19 @@ JSON object followed by a newline.
 Request:
 
 ```json
-{"version":1,"id":"client-generated-id","command":"status","payload":{}}
+{"version":2,"id":"client-generated-id","command":"status","payload":{}}
 ```
 
 Success:
 
 ```json
-{"version":1,"id":"client-generated-id","ok":true,"payload":{}}
+{"version":2,"id":"client-generated-id","ok":true,"payload":{}}
 ```
 
 Failure:
 
 ```json
-{"version":1,"id":"client-generated-id","ok":false,"error":"message"}
+{"version":2,"id":"client-generated-id","ok":false,"error":"message"}
 ```
 
 Unknown protocol versions and commands fail without changing state.
@@ -30,7 +30,7 @@ Unknown protocol versions and commands fail without changing state.
 
 | Command | Purpose |
 | --- | --- |
-| `status` | Return pause, restriction, credit, pending-change, and session state. |
+| `status` | Return pause, restriction, credit, pending-change, session state, and `LockAuthorization` (`Disarmed`, `Armed`, or `Faulted` with a reason). |
 | `stageSettings` | Validate replacement settings and stage them for UTC now + 24 hours. |
 | `cancelPendingSettings` | Remove a pending replacement; active settings are unchanged. |
 | `scheduleException` | Add a local date only when its restriction start is at least 24 hours away. |
@@ -45,5 +45,5 @@ Unknown protocol versions and commands fail without changing state.
 
 `startSession` validates duration (1 second to 8 hours), relock interval (1 to
 3600 seconds), and grace (0 to 300 seconds). External sessions cannot change
-winsomnia settings, consume winsomnia credit, or remove the kill switch.
+winsomnia settings, consume winsomnia credit, or grant lock authorization.
 

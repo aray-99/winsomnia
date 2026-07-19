@@ -1,4 +1,4 @@
-# winsomnia v0.2 architecture
+# winsomnia v0.3 architecture
 
 ## Process boundary
 
@@ -13,12 +13,17 @@ winsomnia UI, schedule, unlock credits, or persisted settings.
 
 ## Safety boundary
 
-- Real locking requires the engine's explicit `--enable-lock` startup switch.
-- A filesystem object at the configured kill-switch path pauses every session.
-- The engine polls the kill switch at least once per second and checks it again
-  immediately before a lock request.
-- Invalid configuration, invalid state, IPC failure, or lock-helper failure does
-  not remove the kill switch and does not retry an unverified lock operation.
+- Real locking requires the engine's explicit `--enable-lock` startup switch,
+  schema-v3 `Armed=true` state, and the fixed affirmative marker
+  `C:\temp\winsomnia-lock-enabled.json`.
+- State and marker contain the same random activation ID. Missing, malformed,
+  mismatched, directory, reparse-point, unknown-version, and I/O-failed markers
+  deny locking and expose a `Disarmed` or `Faulted` reason through IPC.
+- The engine validates the marker at least once per second and again immediately
+  before the injected lock helper. Activation commits armed state first and the
+  marker last; pause revokes the marker first and latches denial on failure.
+- One per-user named mutex permits only one Engine. State transitions and lock
+  decisions are serialized within that process.
 - Session cancellation is scoped by an unguessable cancellation token. One
   client cannot cancel another session by knowing only its public identifier.
 - Automated tests inject a fake locker. They never pass `--enable-lock` to a
@@ -26,7 +31,8 @@ winsomnia UI, schedule, unlock credits, or persisted settings.
 
 ## Persistent state
 
-Schema version 2 separates user settings from mutable state:
+Schema version 3 separates user settings from mutable state and adds
+affirmative lock authorization:
 
 - one daily local-time restriction window;
 - a pending settings replacement with an exact UTC application time;
@@ -37,12 +43,12 @@ Schema version 2 separates user settings from mutable state:
 
 Settings and exceptions never affect the next 24 hours. Credit is the only
 normal immediate override. Credit is charged up front in five-minute units and
-is not refunded. Safety pause through the kill switch remains unlimited and is
-not a credit feature.
+is not refunded. Safety pause through marker revocation and state disarm remains unlimited and
+is not a credit feature.
 
-Version 1 configuration is imported without deleting the original file. The
-migrated engine starts disarmed and preserves the configured kill-switch and log
-paths. Installation and migration leave the kill switch present.
+Version 1 configuration and version 2 state are imported without deleting the
+original file. Only user settings migrate; dynamic state and authorization are
+reset. Migration creates no marker and starts disarmed.
 
 ## Arbitration
 

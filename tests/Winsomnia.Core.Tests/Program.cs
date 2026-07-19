@@ -9,7 +9,8 @@ var tests = new (string Name, Action Run)[]
     ("exceptions require 24 hours notice", TestExceptionCutoff),
     ("session cancellation is token scoped", TestSessionToken),
     ("focus remains active during bedtime credit", TestArbitration),
-    ("schema v1 migration starts disarmed", TestMigration)
+    ("schema v1 migration starts disarmed", TestMigration),
+    ("schema v2 migration imports settings only", TestV2Migration)
 };
 
 var failed = 0;
@@ -88,7 +89,7 @@ static void TestArbitration()
         OverrideUntilUtc = now.ToUniversalTime().AddMinutes(10),
         Sessions = [created.Session]
     };
-    var decision = PolicyEvaluator.Evaluate(state, now.ToUniversalTime(), now, false);
+    var decision = PolicyEvaluator.Evaluate(state, now.ToUniversalTime(), now, true);
     Assert(decision.ShouldLock, "Focus session must remain after bedtime credit.");
     Assert(!decision.BedtimeRestricted, "Credit must suppress only bedtime.");
 }
@@ -100,6 +101,26 @@ static void TestMigration()
     var state = fixture.Manager.LoadOrCreate(legacy);
     Assert(state.Settings.StartTime == "22:30", "Legacy schedule was not imported.");
     Assert(!state.Armed, "Migration must start disarmed.");
+}
+static void TestV2Migration()
+{
+    using var fixture = new Fixture();
+    var legacy = Path.Combine(fixture.Directory, "state-v2.json");
+    File.WriteAllText(legacy, """
+    {
+      "schemaVersion": 2,
+      "settings": { "startTime": "21:15", "endTime": "04:45", "enabled": false, "relockIntervalSeconds": 12,
+        "credit": { "dailyGrantMinutes": 5, "maximumMinutes": 30 } },
+      "armed": true,
+      "activationId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "credit": { "balanceMinutes": 0, "lastAccrualUtc": "2020-01-01T00:00:00Z" },
+      "sessions": [{ "id": "00000000-0000-0000-0000-000000000001" }]
+    }
+    """);
+    var state = fixture.Manager.LoadOrCreate(legacy);
+    Assert(state.Settings.StartTime == "21:15" && !state.Settings.Enabled, "Version 2 settings were not imported.");
+    Assert(!state.Armed && state.ActivationId is null, "Version 2 migration must start disarmed.");
+    Assert(state.Sessions.Count == 0 && state.Credit.BalanceMinutes == 30, "Dynamic version 2 state was imported.");
 }
 static DateTimeOffset AtLocal(int year, int month, int day, int hour, int minute) =>
     new(year, month, day, hour, minute, 0, TimeZoneInfo.Local.GetUtcOffset(new DateTime(year, month, day, hour, minute, 0)));
@@ -117,7 +138,7 @@ sealed class Fixture : IDisposable
     public string Directory { get; } = Path.Combine(Path.GetTempPath(), $"winsomnia-tests-{Guid.NewGuid():N}");
     public FakeClock Clock { get; } = new();
     public StateManager Manager { get; }
-    public Fixture() { System.IO.Directory.CreateDirectory(Directory); Manager = new StateManager(Path.Combine(Directory, "state-v2.json"), Clock); }
+    public Fixture() { System.IO.Directory.CreateDirectory(Directory); Manager = new StateManager(Path.Combine(Directory, "state-v3.json"), Clock); }
     public void Dispose()
     {
         var full = Path.GetFullPath(Directory);
