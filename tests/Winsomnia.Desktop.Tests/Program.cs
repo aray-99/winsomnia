@@ -113,6 +113,28 @@ var rejectedClaim = new WarningClaimCoordinator(
 await rejectedClaim.PollAsync();
 Assert(rejectedNotification.Displays == 0,
     "A rejected Engine claim displayed a notification.");
+var pausedStatus = new EngineStatus(
+    new UserSettings(), Paused: true, Armed: false,
+    new LockAuthorization(LockAuthorizationStates.Disarmed, "Paused by the user."),
+    Restricted: false, Phase: "Outside", NextTransitionUtc: null, CreditMinutes: 30,
+    PendingSettingsApplyAtUtc: null, OverrideUntilUtc: null, GraceUntilUtc: null,
+    ActiveSessions: Array.Empty<LockSession>());
+var pauseDisplay = StatusPresentation.AfterPause(pausedStatus, CultureInfo.GetCultureInfo("en-US"));
+Assert(pauseDisplay.StatusText.Contains("Paused: Yes", StringComparison.Ordinal),
+    "Pause status did not render Paused=true.");
+Assert(pauseDisplay.StatusText.Contains("Armed: No", StringComparison.Ordinal),
+    "Pause status did not render Armed=false.");
+Assert(pauseDisplay.StatusText.Contains("Lock authorization: Disarmed", StringComparison.Ordinal),
+    "Pause status did not render the lock authorization state.");
+Assert(pauseDisplay.StatusText.Contains("Authorization reason: Paused by the user.", StringComparison.Ordinal),
+    "Pause status did not render the lock authorization reason.");
+Assert(pauseDisplay.ConfirmationText.Contains("paused", StringComparison.OrdinalIgnoreCase) &&
+    pauseDisplay.ConfirmationText.Contains("disarmed", StringComparison.OrdinalIgnoreCase),
+    "Pause success confirmation is not explicit.");
+var mainWindowSource = File.ReadAllText(Path.Combine(repository, "src", "Winsomnia.Desktop", "MainWindow.cs"));
+Assert(mainWindowSource.Contains("StatusPresentation.AfterPause(status)", StringComparison.Ordinal) &&
+    mainWindowSource.Contains("operationText.Text = display.ConfirmationText", StringComparison.Ordinal),
+    "MainWindow does not render the pause result and explicit confirmation.");
 Console.WriteLine("PASS localization, DPI, keyboard, system colors, scrolling, prompt, unlock, and close safety");
 return 0;
 

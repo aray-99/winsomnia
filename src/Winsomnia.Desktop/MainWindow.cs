@@ -15,6 +15,7 @@ public sealed class MainWindow : Window
 {
     private readonly EngineClient client;
     private readonly TextBlock statusText = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 16) };
+    private readonly TextBlock operationText = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 16) };
     private readonly TextBox start = new() { Width = 120 };
     private readonly TextBox end = new() { Width = 120 };
     private readonly ComboBox strength = new() { Width = 260 };
@@ -38,7 +39,7 @@ public sealed class MainWindow : Window
     {
         var tabs = new TabControl { Margin = new Thickness(20) };
         tabs.Items.Add(Tab(Localization.Text("Home"), Panel(
-            Heading(Localization.Text("Status")), statusText,
+            Heading(Localization.Text("Status")), statusText, operationText,
             Button(Localization.Text("Refresh"), async () => await RefreshAsync()))));
 
         strength.Items.Add(Localization.Text("Strict"));
@@ -82,12 +83,7 @@ public sealed class MainWindow : Window
             status = await client.GetStatusAsync();
             start.Text = status.Settings.StartTime;
             end.Text = status.Settings.EndTime;
-            statusText.Text =
-                $"{Localization.Text("Status")}: {status.Phase}\n" +
-                $"{Localization.Text("Credit")}: {status.CreditMinutes} min\n" +
-                $"Next / 次回: {status.NextTransitionUtc?.ToLocalTime():g}\n" +
-                $"{Localization.Text("Pending")}: {status.PendingSettingsApplyAtUtc?.ToLocalTime():g}\n" +
-                (string.IsNullOrWhiteSpace(status.Error) ? string.Empty : $"Error: {status.Error}");
+            statusText.Text = StatusPresentation.Render(status);
         }
         catch
         {
@@ -157,12 +153,15 @@ public sealed class MainWindow : Window
     {
         try
         {
-            await client.PauseAsync();
-            await RefreshAsync();
+            status = await client.PauseAsync();
+            var display = StatusPresentation.AfterPause(status);
+            statusText.Text = display.StatusText;
+            operationText.Text = display.ConfirmationText;
         }
         catch (Exception exception)
         {
-            MessageBox.Show(exception.Message, Title, MessageBoxButton.OK, MessageBoxImage.Warning);
+            operationText.Text = $"{Localization.Text("PauseFailed")}: {exception.Message}";
+            MessageBox.Show(operationText.Text, Title, MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
     private async Task ReserveExceptionAsync()
